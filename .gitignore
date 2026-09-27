@@ -1,0 +1,61 @@
+ # Unreal generated folders
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+
+# Visual Studio
+.vs/
+*.sln
+*.slnx
+*.VC.db
+*.VC.opendb
+
+# Rider / JetBrains
+.idea/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Unreal plugin generated folders
+Plugins/**/Binaries/
+Plugins/**/Intermediate/
+
+# External Asset Packs
+Content/AssetPacks
+ # Unreal generated folders
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+
+# Visual Studio
+.vs/
+*.sln
+*.slnx
+*.VC.db
+*.VC.opendb
+
+# Rider / JetBrains
+.idea/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Unreal plugin generated folders
+Plugins/**/Binaries/
+Plugins/**/Intermediate/
+
+# External Asset Packs
+Content/AssetPacks
+
+# Additional Unreal exclusions
+*_Build/
+# Keep the public repository source-only
+Content/
+.diversion/
+Project/
+Build/
+*.zip
