@@ -145,7 +145,8 @@ ASideScrollingCharacter::ASideScrollingCharacter()
 	LifeBar->SetupAttachment(RootComponent);
 	LifeBar->SetRelativeLocation(FVector(0.0f, 0.0f, 120.0f));
 	LifeBar->SetWidgetSpace(EWidgetSpace::Screen);
-	LifeBar->SetDrawAtDesiredSize(true);
+	LifeBar->SetDrawAtDesiredSize(false);
+	LifeBar->SetDrawSize(FVector2D(120.0f, 30.0f));
 
 	static ConstructorHelpers::FClassFinder<UUserWidget> LifeBarClassFinder(TEXT("/Game/Variant_Combat/UI/UI_LifeBar"));
 	if (LifeBarClassFinder.Succeeded())
@@ -340,15 +341,13 @@ void ASideScrollingCharacter::BeginPlay()
 	// Initialize the combat life bar if its Blueprint class loaded successfully.
 	if (LifeBar)
 	{
+		// Keep the player bar the same on-screen size as BP_QC_Enemy's bar.
+		// Reapply this at runtime so older Blueprint component defaults cannot
+		// switch the player back to the widget's smaller desired size.
+		LifeBar->SetDrawAtDesiredSize(false);
+		LifeBar->SetDrawSize(FVector2D(120.0f, 30.0f));
 		LifeBar->InitWidget();
 		LifeBarWidget = Cast<UCombatLifeBar>(LifeBar->GetUserWidgetObject());
-		if (LifeBarWidget)
-		{
-			// Screen-space widget components size from their widget layout, not
-			// their component transform. Preserve the authored render scale.
-			const FVector2D AuthoredScale = LifeBarWidget->GetRenderTransform().Scale;
-			LifeBarWidget->SetRenderScale(AuthoredScale * 1.3f);
-		}
 	}
 
 	// The Combat Blueprint normally supplies montage section names. Since the
