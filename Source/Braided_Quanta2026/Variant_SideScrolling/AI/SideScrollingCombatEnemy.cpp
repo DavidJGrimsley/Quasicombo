@@ -3,6 +3,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Engine/World.h"
+#include "Engine/DamageEvents.h"
 #include "TimerManager.h"
 #include "Animation/AnimInstance.h"
 #include "SideScrollingCharacter.h"
@@ -20,10 +21,44 @@ ASideScrollingCombatEnemy::ASideScrollingCombatEnemy()
 void ASideScrollingCombatEnemy::BeginPlay()
 {
 	MaxHP = static_cast<float>(FMath::Max(1, RequiredHits));
+	Resistance = FMath::Clamp(Resistance, 0.0f, 1.0f);
+	HitReactionAccumulator = Resistance < 1.0f ? Resistance : 0.0f;
 	Super::BeginPlay();
 	SpawnX = GetActorLocation().X;
 	GetCharacterMovement()->SetPlaneConstraintOrigin(GetActorLocation());
 	OnAttackCompleted.BindUObject(this, &ASideScrollingCombatEnemy::FinishSideAttack);
+}
+
+void ASideScrollingCombatEnemy::SetResistance(float NewResistance)
+{
+	const float ClampedResistance = FMath::Clamp(NewResistance, 0.0f, 1.0f);
+	if (!FMath::IsNearlyEqual(Resistance, ClampedResistance))
+	{
+		Resistance = ClampedResistance;
+		// Prime the cadence so the first hit after a real resistance change still
+		// gives readable feedback, unless resistance is a full 1.0.
+		HitReactionAccumulator = Resistance < 1.0f ? Resistance : 0.0f;
+	}
+	else
+	{
+		Resistance = ClampedResistance;
+	}
+}
+
+bool ASideScrollingCombatEnemy::ShouldTriggerHitReaction()
+{
+	const float ClampedResistance = GetResistance();
+	if (ClampedResistance <= KINDA_SMALL_NUMBER) return true;
+	if (ClampedResistance >= 1.0f - KINDA_SMALL_NUMBER) return false;
+
+	// Resistance is the fraction of otherwise valid hits that can be shrugged off.
+	// This accumulator gives deterministic results instead of random combat:
+	// 0.6 resistance reacts to roughly 40% of hits and resists roughly 60%.
+	HitReactionAccumulator += 1.0f - ClampedResistance;
+	if (HitReactionAccumulator + KINDA_SMALL_NUMBER < 1.0f) return false;
+
+	HitReactionAccumulator = FMath::Max(0.0f, HitReactionAccumulator - 1.0f);
+	return true;
 }
 
 void ASideScrollingCombatEnemy::EndPlay(EEndPlayReason::Type EndPlayReason)
@@ -196,18 +231,22 @@ void ASideScrollingCombatEnemy::ApplyDamage(float Damage, AActor* DamageCauser, 
 		LastStrikeCauser = DamageCauser;
 		LastAcceptedStrikeSerial = IncomingSerial;
 	}
-	bSideAttackActive = false;
-	GetWorldTimerManager().ClearTimer(AttackTraceFallbackTimer);
-	GetWorldTimerManager().ClearTimer(AttackTimeoutTimer);
-	if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+	bLastStrikeTriggeredHitReaction = ShouldTriggerHitReaction();
+	if (bLastStrikeTriggeredHitReaction)
 	{
-		AnimInstance->Montage_Stop(0.05f, ComboAttackMontage);
-		AnimInstance->Montage_Stop(0.05f, ChargedAttackMontage);
+		bSideAttackActive = false;
+		GetWorldTimerManager().ClearTimer(AttackTraceFallbackTimer);
+		GetWorldTimerManager().ClearTimer(AttackTimeoutTimer);
+		if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+		{
+			AnimInstance->Montage_Stop(0.05f, ComboAttackMontage);
+			AnimInstance->Montage_Stop(0.05f, ChargedAttackMontage);
+		}
+		bIsAttacking = false;
+		CombatState = ESideCombatState::HitReaction;
+		StateEndsAt = GetWorld()->GetTimeSeconds() + HitReactionDuration;
 	}
-	bIsAttacking = false;
 	++AcceptedStrikes;
-	CombatState = ESideCombatState::HitReaction;
-	StateEndsAt = GetWorld()->GetTimeSeconds() + HitReactionDuration;
 	ResolveAcceptedStrike(DamageCauser, DamageLocation, DamageImpulse);
 	OnAcceptedStrike(AcceptedStrikes, RequiredHits);
 	OnStrikeAccepted(AcceptedStrikes);
@@ -221,10 +260,38 @@ void ASideScrollingCombatEnemy::ResolveAcceptedStrike(AActor* DamageCauser, cons
 	}
 	else
 	{
-		CombatState = ESideCombatState::HitReaction;
-		StateEndsAt = GetWorld()->GetTimeSeconds() + HitReactionDuration;
-		Super::ApplyDamage(1.0f, DamageCauser, DamageLocation, DamageImpulse);
+		if (bLastStrikeTriggeredHitReaction)
+		{
+			CombatState = ESideCombatState::HitReaction;
+			StateEndsAt = GetWorld()->GetTimeSeconds() + HitReactionDuration;
+		}
+		ApplyAcceptedStrikeDamage(1.0f, DamageCauser, DamageLocation, DamageImpulse);
 	}
+}
+
+void ASideScrollingCombatEnemy::ApplyAcceptedStrikeDamage(float Damage, AActor* DamageCauser,
+	const FVector& DamageLocation, const FVector& DamageImpulse)
+{
+	if (bLastStrikeTriggeredHitReaction)
+	{
+		const float ReactionScale = 1.0f - GetResistance();
+		ACombatEnemy::ApplyDamage(Damage, DamageCauser, DamageLocation, DamageImpulse * ReactionScale);
+		if (CurrentHP > 0.0f)
+		{
+			// The stock combat enemy uses a 0.5 partial-ragdoll blend. Fade that
+			// down with resistance so tougher enemies stay more planted.
+			GetMesh()->SetPhysicsBlendWeight(0.5f * ReactionScale);
+		}
+		return;
+	}
+
+	// A resisted hit still counts and still deals damage, but it does not cancel
+	// the enemy's current attack, launch it, or leave it in partial ragdoll.
+	FDamageEvent DamageEvent;
+	const float ActualDamage = TakeDamage(Damage, DamageEvent, nullptr, DamageCauser);
+	if (ActualDamage <= 0.0f) return;
+	if (CurrentHP > 0.0f) GetMesh()->SetPhysicsBlendWeight(0.0f);
+	ReceivedDamage(ActualDamage, DamageLocation, FVector::ZeroVector);
 }
 
 void ASideScrollingCombatEnemy::SuspendSideCombat()
@@ -244,6 +311,8 @@ void ASideScrollingCombatEnemy::ResetSideCombat(int32 Hits)
 	RequiredHits = FMath::Max(1, Hits);
 	MaxHP = CurrentHP = static_cast<float>(RequiredHits);
 	AcceptedStrikes = 0;
+	HitReactionAccumulator = GetResistance() < 1.0f ? GetResistance() : 0.0f;
+	bLastStrikeTriggeredHitReaction = true;
 	LastStrikeCauser.Reset();
 	LastAcceptedStrikeSerial = -1;
 	SpawnX = GetActorLocation().X;

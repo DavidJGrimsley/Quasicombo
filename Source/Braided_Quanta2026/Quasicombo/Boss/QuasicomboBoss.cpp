@@ -26,6 +26,11 @@
 
 namespace
 {
+float BossResistanceForArmorBars(int32 ArmorBars)
+{
+	return FMath::Lerp(0.6f, 1.0f, FMath::Clamp(static_cast<float>(ArmorBars) / 2.0f, 0.0f, 1.0f));
+}
+
 const TCHAR* ArmorNames[] = {
 	TEXT("SK_Cloth"), TEXT("SK_BeltWaist"), TEXT("SK_LeftArmArmor"), TEXT("SK_RightArmArmor"),
 	TEXT("SK_LeftShoulderArmor_01"), TEXT("SK_BeltsBody"), TEXT("SK_RightShoulderArmor"),
@@ -46,6 +51,7 @@ AQuasicomboBoss::AQuasicomboBoss()
 	AttackTimeout = 3.5f;
 	MeleeDamage = 2.0f;
 	TailDamage = 4.0f;
+	SetResistance(BossResistanceForArmorBars(0));
 	Quantum = CreateDefaultSubobject<UQuantumBossComponent>(TEXT("QuantumState"));
 	QTE = CreateDefaultSubobject<UQuasicomboQTEComponent>(TEXT("FinalQTE"));
 	static ConstructorHelpers::FObjectFinder<USkeletalMesh> Body(TEXT("/Game/Lizardman_Berserker/Mesh/SeparatedMesh/SK_Body"));
@@ -105,6 +111,7 @@ void AQuasicomboBoss::BeginPlay()
 	HitsPerArmorBar = FMath::Max(1, HitsPerArmorBar);
 	RequiredHits = BaseHealthHits;
 	BaseHitsRemaining = BaseHealthHits;
+	SetResistance(BossResistanceForArmorBars(0));
 	Super::BeginPlay();
 	BossStartTransform = GetActorTransform();
 	for (USkeletalMeshComponent* Part : ArmorPieces) Part->SetLeaderPoseComponent(GetMesh());
@@ -244,7 +251,7 @@ void AQuasicomboBoss::ApplyDamage(float Damage, AActor* DamageCauser, const FVec
 	}
 	const int32 Before = AcceptedStrikes;
 	Super::ApplyDamage(Damage, DamageCauser, Location, Impulse);
-	if (AcceptedStrikes != Before && bTailActive)
+	if (AcceptedStrikes != Before && bTailActive && DidLastStrikeTriggerHitReaction())
 	{
 		bTailActive = false;
 		if (UAnimInstance* Anim = GetMesh()->GetAnimInstance()) Anim->Montage_Stop(0.08f, TailMontage);
@@ -255,22 +262,24 @@ void AQuasicomboBoss::ResolveAcceptedStrike(AActor* Causer, const FVector& Locat
 {
 	if (ArmorHitsRemaining > 0) --ArmorHitsRemaining;
 	else BaseHitsRemaining = FMath::Max(0, BaseHitsRemaining - 1);
+	SetResistance(BossResistanceForArmorBars(GetArmorBars()));
 	if (BaseHitsRemaining == 0 && ArmorHitsRemaining == 0)
 	{
 		HandleRequiredHitsReached(Causer, Location, Impulse);
 	}
 	else
 	{
-		// The inherited damage effects still run; total HP remains useful to combat consumers.
-		// The stock enemy impulse lifts this much larger rig into the air.
-		// Its authored stagger supplies the feedback while the feet stay planted.
-		ACombatEnemy::ApplyDamage(1.0f, Causer, Location, FVector::ZeroVector);
-		// Keep the modular rig and tail contact on the authored animation pose.
+		// Keep total HP/effects in sync. A resisted strike still damages the boss,
+		// but does not cancel its attack or force the authored stagger animation.
+		ApplyAcceptedStrikeDamage(1.0f, Causer, Location, FVector::ZeroVector);
 		GetMesh()->SetPhysicsBlendWeight(0.0f);
-		GetCharacterMovement()->StopMovementImmediately();
 		CurrentHP = static_cast<float>(BaseHitsRemaining + ArmorHitsRemaining);
-		if (UAnimInstance* Anim = GetMesh()->GetAnimInstance(); Anim && HitReactionAnimation)
-			Anim->PlaySlotAnimationAsDynamicMontage(HitReactionAnimation, TEXT("DefaultSlot"), 0.06f, 0.12f);
+		if (DidLastStrikeTriggerHitReaction())
+		{
+			GetCharacterMovement()->StopMovementImmediately();
+			if (UAnimInstance* Anim = GetMesh()->GetAnimInstance(); Anim && HitReactionAnimation)
+				Anim->PlaySlotAnimationAsDynamicMontage(HitReactionAnimation, TEXT("DefaultSlot"), 0.06f, 0.12f);
+		}
 	}
 	UpdateAppearance();
 	UpdateHealthBar();
@@ -308,6 +317,7 @@ void AQuasicomboBoss::FinishEvolution()
 		AwardedArmorBars = FMath::Clamp(PreviewArmorBars, 0, 2);
 #endif
 	ArmorHitsRemaining = AwardedArmorBars * HitsPerArmorBar;
+	SetResistance(BossResistanceForArmorBars(GetArmorBars()));
 	RequiredHits = BaseHealthHits + ArmorHitsRemaining;
 	MaxHP = static_cast<float>(RequiredHits);
 	CurrentHP = static_cast<float>(BaseHitsRemaining + ArmorHitsRemaining);
@@ -392,6 +402,7 @@ void AQuasicomboBoss::RestartEncounter()
 	SetActorTransform(BossStartTransform, false, nullptr, ETeleportType::TeleportPhysics);
 	BaseHitsRemaining = BaseHealthHits;
 	ArmorHitsRemaining = AwardedArmorBars * HitsPerArmorBar;
+	SetResistance(BossResistanceForArmorBars(GetArmorBars()));
 	bCorpseSettling = false;
 	GetMesh()->bPauseAnims = false;
 	ResetSideCombat(BaseHealthHits + ArmorHitsRemaining);

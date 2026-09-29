@@ -23,11 +23,16 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Side Combat", meta=(ClampMin="0.01", Units="s")) float ChargedAttackWindup = 0.9f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Side Combat", meta=(ClampMin="0.0", Units="s")) float RecoveryDuration = 0.35f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Side Combat", meta=(ClampMin="0.0", Units="s")) float HitReactionDuration = 0.3f;
+	/** 0 = reacts to every hit; 1 = ignores all non-lethal hit reactions. Damage is unaffected. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Side Combat|Damage", meta=(ClampMin="0.0", ClampMax="1.0")) float Resistance = 0.0f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Side Combat", meta=(ClampMin="0.1", Units="s")) float AttackTimeout = 2.5f;
 	UPROPERTY(BlueprintReadOnly, Category="Side Combat") ESideCombatState CombatState = ESideCombatState::Idle;
 	UFUNCTION(BlueprintPure, Category="Side Combat") int32 GetAcceptedStrikes() const { return AcceptedStrikes; }
 	UFUNCTION(BlueprintPure, Category="Side Combat") int32 GetRemainingStrikes() const { return FMath::Max(0, RequiredHits - AcceptedStrikes); }
 	UFUNCTION(BlueprintPure, Category="Side Combat") bool IsCombatDefeated() const { return AcceptedStrikes >= RequiredHits; }
+	UFUNCTION(BlueprintPure, Category="Side Combat|Damage") float GetResistance() const { return FMath::Clamp(Resistance, 0.0f, 1.0f); }
+	UFUNCTION(BlueprintCallable, Category="Side Combat|Damage") void SetResistance(float NewResistance);
+	UFUNCTION(BlueprintPure, Category="Side Combat|Damage") bool WasLastStrikeResisted() const { return !bLastStrikeTriggeredHitReaction; }
 	UFUNCTION(BlueprintImplementableEvent, Category="Side Combat") void OnAcceptedStrike(int32 StrikeCount, int32 StrikesRequired);
 	virtual void ApplyDamage(float Damage, AActor* DamageCauser, const FVector& DamageLocation, const FVector& DamageImpulse) override;
 	virtual void DoAttackTrace(FName DamageSourceBone) override;
@@ -41,6 +46,9 @@ protected:
 	virtual bool CanProcessSideCombat() const { return true; }
 	virtual bool StartCustomSideAttack(bool bCharged) { return false; }
 	virtual void ResolveAcceptedStrike(AActor* DamageCauser, const FVector& DamageLocation, const FVector& DamageImpulse);
+	/** Applies HP/effects while respecting whether the current accepted strike actually staggered this enemy. */
+	void ApplyAcceptedStrikeDamage(float Damage, AActor* DamageCauser, const FVector& DamageLocation, const FVector& DamageImpulse);
+	bool DidLastStrikeTriggerHitReaction() const { return bLastStrikeTriggeredHitReaction; }
 	void SuspendSideCombat();
 	void ResetSideCombat(int32 Hits);
 	void FinishSideAttack();
@@ -56,10 +64,13 @@ private:
 	bool bSideAttackActive = false;
 	bool bStartingSideAttack = false;
 	bool bAttackTraceFired = false;
+	float HitReactionAccumulator = 0.0f;
+	bool bLastStrikeTriggeredHitReaction = true;
 	FTimerHandle AttackTraceFallbackTimer;
 	FTimerHandle AttackTimeoutTimer;
 	bool HasFloorAhead(float Direction) const;
 	void StartSideAttack();
 	void FallbackAttackTrace();
 	void TimeoutSideAttack();
+	bool ShouldTriggerHitReaction();
 };
