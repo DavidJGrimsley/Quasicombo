@@ -81,10 +81,12 @@ private:
 	bool bLastStrikeTriggeredHitReaction = true;
 	FTimerHandle AttackTraceFallbackTimer;
 	FTimerHandle AttackTimeoutTimer;
+	FTimerHandle HitReactionPhysicsTimer;
 	bool HasFloorAhead(float Direction) const;
 	void StartSideAttack();
 	void FallbackAttackTrace();
 	void TimeoutSideAttack();
 	bool ShouldTriggerHitReaction();
 	float GetEffectiveHitReactionDuration() const;
+	void ResetHitReactionPhysics();
 };

@@ -58,10 +58,22 @@ float ASideScrollingCombatEnemy::GetEffectiveHitReactionDuration() const
 	return FMath::Max(0.08f, HitReactionDuration * (1.0f - GetToughness()));
 }
 
+void ASideScrollingCombatEnemy::ResetHitReactionPhysics()
+{
+	// A reduced Toughness impulse may be too small to put CharacterMovement into
+	// Falling, so Landed() may never fire. Always restore animation control after
+	// a nonlethal stagger instead of leaving marketplace rigs partially ragdolled.
+	if (CurrentHP > 0.0f && !IsCombatDefeated() && GetMesh())
+	{
+		GetMesh()->SetPhysicsBlendWeight(0.0f);
+	}
+}
+
 void ASideScrollingCombatEnemy::EndPlay(EEndPlayReason::Type EndPlayReason)
 {
 	GetWorldTimerManager().ClearTimer(AttackTraceFallbackTimer);
 	GetWorldTimerManager().ClearTimer(AttackTimeoutTimer);
+	GetWorldTimerManager().ClearTimer(HitReactionPhysicsTimer);
 	OnAttackCompleted.Unbind();
 	Super::EndPlay(EndPlayReason);
 }
@@ -295,6 +307,13 @@ void ASideScrollingCombatEnemy::ApplyAcceptedStrikeDamage(float Damage, AActor* 
 		if (CurrentHP > 0.0f)
 		{
 			GetMesh()->SetPhysicsBlendWeight(0.5f * ReactionScale);
+			GetWorldTimerManager().ClearTimer(HitReactionPhysicsTimer);
+			GetWorldTimerManager().SetTimer(
+				HitReactionPhysicsTimer,
+				this,
+				&ASideScrollingCombatEnemy::ResetHitReactionPhysics,
+				GetEffectiveHitReactionDuration(),
+				false);
 		}
 		return;
 	}
@@ -317,6 +336,8 @@ void ASideScrollingCombatEnemy::SuspendSideCombat()
 	ChargedStrikeReadyAt = 0.0f;
 	GetWorldTimerManager().ClearTimer(AttackTraceFallbackTimer);
 	GetWorldTimerManager().ClearTimer(AttackTimeoutTimer);
+	GetWorldTimerManager().ClearTimer(HitReactionPhysicsTimer);
+	if (CurrentHP > 0.0f && GetMesh()) GetMesh()->SetPhysicsBlendWeight(0.0f);
 	if (UAnimInstance* Anim = GetMesh()->GetAnimInstance()) Anim->StopAllMontages(0.1f);
 	GetCharacterMovement()->StopMovementImmediately();
 }
