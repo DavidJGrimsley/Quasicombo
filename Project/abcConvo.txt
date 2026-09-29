@@ -1,0 +1,287 @@
+For a mathematically valid braid, there is no required minimum number of choices beyond having strands and crossings. A three-strand braid can be represented by any sequence of the generators σ1, σ2, and their inverses; even a single crossing is already a nontrivial braid operation. In the three-strand braid group \(B_3\), the two basic generators are σ1 and σ2.
+
+For Quasicombo, though, I would use at least 3 braid choices before the boss, and preferably 4.
+
+Why 3? Because with only one choice:
+
+σ1
+
+you technically braided something, but you haven't really demonstrated the interesting part.
+
+With two choices:
+
+σ1 → σ2
+
+you start showing that multiple exchanges can combine.
+
+With three choices, you can get things like:
+
+σ1 → σ2 → σ1
+
+or:
+
+σ2 → σ1 → σ2
+
+which is especially relevant because the three-strand braid group has the fundamental braid relation:
+
+σ1 σ2 σ1 = σ2 σ1 σ2
+
+So three crossings gives you something that visibly looks and behaves like a meaningful three-strand braid rather than just one swap.
+
+For your game, I’d structure a short level like:
+
+Combat Area 1
+      ↓
+Braid Choice 1
+      ↓
+Combat Area 2
+      ↓
+Braid Choice 2
+      ↓
+Combat Area 3
+      ↓
+Braid Choice 3
+      ↓
+Boss
+
+That means each boss receives a braid word of length 3, for example:
+
+σ1
+σ2⁻¹
+σ1
+
+If you have time, 4 choices is better because there are more possible histories and the boss result can vary more:
+
+σ1 → σ2⁻¹ → σ1⁻¹ → σ2
+
+Your API already supports braid words up to many operations, so technically you aren't constrained to 3 or 4. But for a jam game, I would not make the player do 8–10 junctions just to make the quantum part “more real.”
+
+My recommendation
+
+Use:
+
+3 choices per level/boss for the MVP.
+
+Then if the level feels too short:
+
+increase to 4.
+
+Three gives you:
+
+all three strands involved,
+both σ1 and σ2 opportunities,
+an actual recognizable braid,
+order dependence,
+and a very manageable amount of level building.
+
+One subtle point: I would make sure your three choices aren't allowed to all be the same generator. Something like:
+
+σ1 → σ1 → σ1
+
+is still a valid braid word, but it only keeps exchanging the same pair of strands.
+
+For Quasicombo, design the junctions so the player encounters something like:
+
+Junction 1: σ1 or σ1⁻¹
+Junction 2: σ2 or σ2⁻¹
+Junction 3: σ1 or σ1⁻¹
+
+or the reverse:
+
+σ2 choice
+↓
+σ1 choice
+↓
+σ2 choice
+
+That gives you a much better three-strand braid for the boss calculation. Fibonacci-anyon work specifically represents braiding through braid-group generators like these, so this lines up with the model your API is simulating.
+For your braid design
+
+Design the braid sequence
+Choose 3 vs 4 junctions
+
+For Quasicombo, design the junctions so the player encounters something like:
+
+what do you mean? make them not go a a a or b b b ?
+
+Right — I explained that badly. I do NOT mean “don’t let the player choose A, A, A” or “B, B, B.”
+
+The key is that A/B/C are the three paths/strands, while σ1 and σ2 describe crossings between those strands.
+
+So the game should care about transitions/crossings, not the letters by themselves:
+
+A → A = no crossing
+A → B = A/B crossing = σ1 or σ1⁻¹
+B → A = A/B crossing = σ1 or σ1⁻¹
+B → C = B/C crossing = σ2 or σ2⁻¹
+C → B = B/C crossing = σ2 or σ2⁻¹
+C → C = no crossing
+
+For the simple version, I would not allow A → C as one choice, because A and C aren't adjacent. That would need to be represented as two crossings.
+
+So imagine this:
+
+SECTION 1        SECTION 2
+
+A ─────────────── A
+ \               
+  \────────────── B
+                  
+C ─────────────── C
+
+If the player starts on A and takes the crossing down to B, that crossing is what gets recorded as σ1 or σ1⁻¹.
+
+If they instead stay on A:
+
+A ───────────── A
+
+nothing gets added to the braid history.
+
+For Quasicombo, though...
+
+I actually think it'll be cleaner if every major junction forces a crossing choice, so each section contributes something to the braid.
+
+For example:
+
+Junction 1: A/B crossing
+            σ1 or σ1⁻¹
+
+Junction 2: B/C crossing
+            σ2 or σ2⁻¹
+
+Junction 3: A/B crossing
+            σ1 or σ1⁻¹
+
+The player isn't choosing:
+
+A / B / C
+A / B / C
+A / B / C
+
+They're choosing which way to cross at each junction.
+
+So a playthrough might produce:
+
+σ1
+↓
+σ2⁻¹
+↓
+σ1
+
+That's what goes into the Quantum API.
+
+Your visible environment can still look like three paths A/B/C, but underneath, the game registers the crossing between paths, not simply “Player chose Path B.”
+
+That distinction is the piece I should've made clearer earlier.
+
+For the braid choices
+
+Show a simple A/B/C junction
+Map choices to σ1 and σ2
+well the way I built it so far... the player can get from a to c if they want. are you saying that's aproblem?
+
+No — A → C is not a problem. I’d keep your level the way you built it.
+
+The only thing is that, for the quantum braid calculation, A → C should count as two adjacent crossings, because with three strands the elementary braid operations are only between neighboring strands.
+
+For the simple game implementation:
+
+A ↔ B = 1 braid operation
+B ↔ C = 1 braid operation
+
+A ↔ C = 2 braid operations
+
+So if the player does:
+
+A → C
+
+you can internally treat that as:
+
+A → B → C
+
+and record something like:
+
+σ1 → σ2
+
+or the inverse-direction version depending on how that particular crossing is designed.
+
+Likewise:
+
+C → A
+
+could become:
+
+σ2⁻¹ → σ1⁻¹
+What I would do in Unreal
+
+Don't try to infer this from coordinates. Give each exit trigger a predefined braid sequence.
+
+For example:
+
+BP_PathChoice_AtoB
+Operations:
+[σ1]
+
+BP_PathChoice_BtoC
+Operations:
+[σ2]
+
+BP_PathChoice_AtoC
+Operations:
+[σ1, σ2]
+
+Then an A→C route can still be one continuous gameplay path. The player doesn't literally need to stop on B.
+
+Visually:
+
+A ───────╲
+          ╲
+B ────────╳────
+            ╲
+C ──────────╲──── PLAYER
+
+The route passes from one side of the three-strand arrangement to the other, so internally you've crossed two neighboring strands.
+
+One important caveat
+
+The exact sequence depends on how you draw the crossings.
+
+A→C isn't automatically always σ1, σ2. You also have crossing direction:
+
+σ1
+σ1⁻¹
+σ2
+σ2⁻¹
+
+So when you build each route, you decide once:
+
+“This A→C path visually goes across these two strands in this direction.”
+
+Then assign that trigger the corresponding two-operation sequence.
+
+For the jam, I would absolutely do it this way rather than redesign your level.
+
+So your choice trigger can contain an array instead of one operation:
+
+BraidOperations
+
+A → B:
+[σ1]
+
+A → C:
+[σ1, σ2]
+
+C → A:
+[σ2⁻¹, σ1⁻¹]
+
+Then:
+
+Player enters choice trigger
+        ↓
+For Each Braid Operation
+        ↓
+Add to Braid History
+
+That actually gives you something useful: taking the longer A↔C crossing contributes more crossings to the final braid, which could make that route feel more significant without needing extra visible UI.
+
+For your route setup

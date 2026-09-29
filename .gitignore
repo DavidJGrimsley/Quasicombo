@@ -22,8 +22,8 @@ Thumbs.db
 Plugins/**/Binaries/
 Plugins/**/Intermediate/
 
-# External Asset Packs
-Content/AssetPacks
+# Content folder including External Asset Packs
+Content
  # Unreal generated folders
 Binaries/
 DerivedDataCache/
@@ -48,14 +48,6 @@ Thumbs.db
 Plugins/**/Binaries/
 Plugins/**/Intermediate/
 
-# External Asset Packs
-Content/AssetPacks
 
 # Additional Unreal exclusions
 *_Build/
-# Keep the public repository source-only
-Content/
-.diversion/
-Project/
-Build/
-*.zip

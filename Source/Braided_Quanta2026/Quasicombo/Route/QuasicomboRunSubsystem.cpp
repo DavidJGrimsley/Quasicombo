@@ -2,6 +2,17 @@
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
+#include "QuasicomboBoss.h"
+
+void UQuasicomboRunSubsystem::RegisterBossEncounter(AQuasicomboBoss* Boss) { ActiveBoss = Boss; }
+bool UQuasicomboRunSubsystem::TryHandleBossFailure()
+{
+	return RunOutcome == EQuasicomboRunOutcome::Playing && ActiveBoss.IsValid() && ActiveBoss->HandleEncounterFailure();
+}
+bool UQuasicomboRunSubsystem::IsBossCombatLocked() const
+{
+	return ActiveBoss.IsValid() && ActiveBoss->IsPlayerCombatLocked();
+}
 
 namespace
 {
@@ -66,10 +77,24 @@ void UQuasicomboRunSubsystem::EndRun(EQuasicomboRunOutcome Outcome)
 	}
 	RunOutcome = Outcome;
 	EndTime = GetWorld()->GetTimeSeconds();
+	if (Outcome == EQuasicomboRunOutcome::Victory)
+	{
+		VictoryScore = CalculateScore(GetElapsedSeconds(), HighestCombo, BraidOperations, MeasuredOutcome);
+	}
 	OnRunEnded.Broadcast(Outcome);
 	if (Outcome == EQuasicomboRunOutcome::Defeat)
 	{
 		GetWorld()->GetTimerManager().SetTimer(ReloadTimer, this, &UQuasicomboRunSubsystem::ReloadRun, 1.5f, false);
+	}
+}
+
+void UQuasicomboRunSubsystem::ExtendDefeatReload(float MinimumSeconds)
+{
+	if (RunOutcome != EQuasicomboRunOutcome::Defeat || !GetWorld()) return;
+	if (GetWorld()->GetTimerManager().GetTimerRemaining(ReloadTimer) < MinimumSeconds)
+	{
+		GetWorld()->GetTimerManager().SetTimer(ReloadTimer, this, &UQuasicomboRunSubsystem::ReloadRun,
+			MinimumSeconds, false);
 	}
 }
 
@@ -78,13 +103,70 @@ float UQuasicomboRunSubsystem::GetElapsedSeconds() const
 	return FMath::Max(0.0f, (RunOutcome == EQuasicomboRunOutcome::Playing && GetWorld() ? GetWorld()->GetTimeSeconds() : EndTime) - StartTime);
 }
 
+int32 UQuasicomboRunSubsystem::GetVictoryScore() const
+{
+	return GetVictoryScoreBreakdown().Total;
+}
+
+FQuasicomboScoreBreakdown UQuasicomboRunSubsystem::GetVictoryScoreBreakdown() const
+{
+	return RunOutcome == EQuasicomboRunOutcome::Victory ? VictoryScore : FQuasicomboScoreBreakdown{};
+}
+
+void UQuasicomboRunSubsystem::RecordFinisherMeasurement(bool bTauOutcome, bool bHasQuantumState,
+	double VacuumProbability, double TauProbability, bool bFallback)
+{
+	if (RunOutcome != EQuasicomboRunOutcome::Playing || MeasuredOutcome != EQuasicomboMeasuredOutcome::Unavailable) return;
+	MeasuredOutcome = bTauOutcome ? EQuasicomboMeasuredOutcome::Tau : EQuasicomboMeasuredOutcome::Vacuum;
+	bHasFinalQuantumState = bHasQuantumState;
+	if (bHasFinalQuantumState)
+	{
+		FinalVacuumProbability = VacuumProbability;
+		FinalTauProbability = TauProbability;
+		bUsedQuantumFallback = bFallback;
+	}
+}
+
+TArray<FQuasicomboBraidOperation> UQuasicomboRunSubsystem::ReduceBraid(const TArray<FQuasicomboBraidOperation>& Operations)
+{
+	TArray<FQuasicomboBraidOperation> Reduced;
+	for (const FQuasicomboBraidOperation& Operation : Operations)
+	{
+		if (!Reduced.IsEmpty() && Reduced.Last().Generator == Operation.Generator &&
+			Reduced.Last().Power == -Operation.Power)
+		{
+			Reduced.Pop();
+		}
+		else
+		{
+			Reduced.Add(Operation);
+		}
+	}
+	return Reduced;
+}
+
+FQuasicomboScoreBreakdown UQuasicomboRunSubsystem::CalculateScore(float ElapsedSeconds, int32 BestCombo,
+	const TArray<FQuasicomboBraidOperation>& Operations, EQuasicomboMeasuredOutcome Outcome)
+{
+	FQuasicomboScoreBreakdown Score;
+	Score.TimePoints = FMath::RoundToInt(10000.0f * 90.0f / (90.0f + FMath::Max(0.0f, ElapsedSeconds)));
+	Score.ComboPoints = FMath::Max(0, BestCombo) * 200;
+	Score.NetCrossings = ReduceBraid(Operations).Num();
+	Score.BraidPoints = Score.NetCrossings * 350;
+	Score.QuantumPoints = Outcome == EQuasicomboMeasuredOutcome::Tau ? 2000 : 0;
+	Score.Total = Score.TimePoints + Score.ComboPoints + Score.BraidPoints + Score.QuantumPoints;
+	return Score;
+}
+
 void UQuasicomboRunSubsystem::RecordCombo(int32 Combo)
 {
+	if (RunOutcome != EQuasicomboRunOutcome::Playing) return;
 	HighestCombo = FMath::Max(HighestCombo, Combo);
 }
 
 void UQuasicomboRunSubsystem::RecordDamageTaken(float Amount)
 {
+	if (RunOutcome != EQuasicomboRunOutcome::Playing) return;
 	DamageTaken += FMath::Max(0.0f, Amount);
 }
 

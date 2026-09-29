@@ -38,6 +38,13 @@ protected:
 	virtual void OnStrikeAccepted(int32 StrikeCount);
 	/** Boss variants can choose a charged montage while retaining one-hit timing guards. */
 	virtual bool ShouldUseChargedSideAttack() const;
+	virtual bool CanProcessSideCombat() const { return true; }
+	virtual bool StartCustomSideAttack(bool bCharged) { return false; }
+	virtual void ResolveAcceptedStrike(AActor* DamageCauser, const FVector& DamageLocation, const FVector& DamageImpulse);
+	void SuspendSideCombat();
+	void ResetSideCombat(int32 Hits);
+	void FinishSideAttack();
+	void SuppressFallbackAttackTrace() { bAttackTraceFired = true; }
 	virtual void HandleRequiredHitsReached(AActor* DamageCauser, const FVector& DamageLocation, const FVector& DamageImpulse);
 	UPROPERTY(BlueprintReadOnly, Category="Side Combat") int32 AcceptedStrikes = 0;
 private:
@@ -55,5 +62,4 @@ private:
 	void StartSideAttack();
 	void FallbackAttackTrace();
 	void TimeoutSideAttack();
-	void FinishSideAttack();
 };

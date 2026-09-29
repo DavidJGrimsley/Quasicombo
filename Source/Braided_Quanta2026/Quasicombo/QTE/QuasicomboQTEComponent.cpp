@@ -18,13 +18,13 @@ void UQuasicomboQTEComponent::BeginPlay()
 	}
 }
 
-void UQuasicomboQTEComponent::BeginQTE(bool bTauOutcome)
+void UQuasicomboQTEComponent::BeginQTE(bool bTauOutcome, int32 RoundCount)
 {
 	if (IsQTEActive() || !GetWorld()) return;
 	const UQuasicomboRunSubsystem* Run = GetWorld()->GetSubsystem<UQuasicomboRunSubsystem>();
 	if (!Run || Run->GetOutcome() != EQuasicomboRunOutcome::Playing) return;
 	bResultDelivered = false;
-	Sequence.Begin(bTauOutcome, FPlatformTime::Seconds(), PromptWindowSeconds);
+	Sequence.Begin(bTauOutcome, FPlatformTime::Seconds(), PromptWindowSeconds, RoundCount);
 	OnPromptChanged.Broadcast(GetExpectedInput(), 1);
 }
 
@@ -87,7 +87,19 @@ void UQuasicomboQTEComponent::Finish(bool bSucceeded)
 	UQuasicomboRunSubsystem* Run = GetWorld() ? GetWorld()->GetSubsystem<UQuasicomboRunSubsystem>() : nullptr;
 	if (AQuasicomboBoss* Boss = Cast<AQuasicomboBoss>(GetOwner())) Boss->RestoreCameraAndTime();
 	OnQTEFinished.Broadcast(bSucceeded);
+	if (AQuasicomboBoss* Boss = Cast<AQuasicomboBoss>(GetOwner()))
+	{
+		Boss->HandleQTEResult(bSucceeded);
+		return;
+	}
 	if (Run) Run->EndRun(bSucceeded ? EQuasicomboRunOutcome::Victory : EQuasicomboRunOutcome::Defeat);
+}
+
+void UQuasicomboQTEComponent::CancelQTE()
+{
+	Sequence.Cancel();
+	bFinishingBeat = false;
+	bResultDelivered = true;
 }
 
 void UQuasicomboQTEComponent::HandleRunEnded(EQuasicomboRunOutcome)

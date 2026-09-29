@@ -1,0 +1,214 @@
+Yes — that’s basically the idea. The Quantum API Unreal plugin should expose the braiding and time-evolution calls as Blueprint-friendly async nodes, so the game can be made mostly in Blueprints regardless of whether the project was created as “Blueprint” or “C++.” Epic explicitly supports this hybrid pattern: C++ supplies foundational systems, and Blueprint builds behaviors on top.
+
+For you specifically, with Codex helping locally, I would start Braid Breaker as a C++ project.
+
+Not because I think you should write the whole game in C++. I don’t. I’d still make most of the game in Blueprints. The reason is that a C++ project gives Codex a normal Source/ tree full of .h and .cpp files that it can inspect, edit, refactor, test, and reason about directly. By contrast, Blueprint classes are Unreal assets stored as .uasset files, and Epic notes that these assets are binary and cannot be opened or merged like normal text files.
+
+So there are really two separate decisions:
+
+Decision	What I recommend
+Project type	C++ project
+How you actually build gameplay	Mostly Blueprints
+
+That gives you the best of both worlds.
+
+Epic also confirms that choosing C++ does not stop you from using Blueprints; it just establishes C++ source infrastructure from the beginning. Likewise, a Blueprint project can be converted later by adding a C++ class, but starting C++ avoids having to do that conversion once Codex starts creating reusable systems.
+
+For Braid Breaker, I’d split it roughly like this:
+
+C++ / Codex-friendly
+────────────────────────
+Quantum API plugin
+HTTP/API plumbing
+Blueprint async nodes
+Request/response structs
+Optional reusable game systems
+Save/load helpers if needed
+Debug helpers
+Anything that becomes a giant Blueprint graph
+
+
+Blueprints
+────────────────────────
+Player combat
+Enemy combat
+Animations
+Level scripting
+Camera
+Branching level exits
+QTE logic
+Boss phase logic
+UI
+VFX
+Sound
+Braid visualization
+Boss tuning
+
+The key is that the quantum math should not live in your Unreal game at all. The API handles that. Unreal should get simple values back like:
+
+Vacuum Probability = 0.31
+Tau Probability    = 0.69
+Measurement        = Tau
+
+Your Blueprint does not need to know what an F-matrix, R-matrix, or unitary is.
+
+For example, the Blueprint experience I want you to have is basically:
+
+Get Braid History
+      ↓
+Evaluate Topological Braid
+      ↓
+Success
+      ↓
+Break Braid Result
+      ↓
+Tau Probability
+      ↓
+Set Boss Aggression
+
+Not this:
+
+Calculate Fibonacci fusion space
+Multiply complex matrices
+Apply F^-1 R F
+Normalize amplitudes
+...
+
+That shit belongs in the API.
+
+Why C++ helps Codex so much
+
+This is probably the strongest reason to pick C++ for you.
+
+If you say to Codex:
+
+Add a reusable boss quantum state component that stores the latest braid result, calls the Quantum API plugin, exposes the result to Blueprint, and fires an event when the request finishes.
+
+Codex can create something like:
+
+Source/BraidBreaker/
+    QuantumBossComponent.h
+    QuantumBossComponent.cpp
+
+and expose:
+
+UFUNCTION(BlueprintCallable)
+EvaluateBossBraid();
+
+UPROPERTY(BlueprintReadOnly)
+float TauProbability;
+
+Then you use the component visually from Blueprint.
+
+That's a very strong workflow.
+
+Whereas if the whole system exists only in:
+
+BP_Boss.uasset
+
+Codex cannot simply open that as source code and safely rewrite nodes the same way it can edit C++. Epic's own documentation distinguishes Blueprint assets from code files, and the engine even needs a dedicated Blueprint diff tool because a normal text diff is not suitable for them.
+
+So your workflow becomes:
+
+YOU
+Blueprint gameplay/design
+visuals
+animations
+tuning
+
+CODEx
+C++ foundation
+components
+helpers
+plugin integration
+boring plumbing
+
+UNREAL
+Blueprints inherit/use the C++ systems
+
+That is probably a better use of Codex than having it try to somehow manipulate Blueprint graphs indirectly.
+
+You also do not have to commit to C++
+
+This is important.
+
+Starting with:
+
+Third Person → C++
+
+doesn't mean:
+
+"Now I have to make the character in C++."
+
+You can immediately make:
+
+ABraidBreakerCharacter   <-- C++ base
+        ↓
+BP_BraidBreakerCharacter <-- your actual Blueprint
+
+Epic specifically recommends C++ as a foundation with Blueprint classes extending it.
+
+And if a system is easy in Blueprint, leave it there.
+
+For example, I would absolutely leave your QTE presentation logic in Blueprint:
+
+Start QTE
+ ↓
+Create Widget
+ ↓
+Show Button
+ ↓
+Wait for Input
+ ↓
+Grade Input
+ ↓
+Play Montage
+
+There is no reason to turn that into C++ just because the project is technically a C++ project.
+
+What I'd create on day one
+
+I'd start:
+
+Games → Third Person → C++
+
+and then immediately create Blueprint subclasses for the things you'll actually work with:
+
+C++ foundations
+ABraidBreakerCharacter
+ABraidBreakerGameMode
+possibly UBraidGameInstance
+possibly UQuantumBossComponent
+
+        ↓ Blueprint children
+
+BP_Player
+BP_BraidBreakerGameMode
+BP_BraidGameInstance
+BP_Boss
+
+You don't even necessarily need those custom C++ classes immediately. The important thing is that the project has its Source/ directory and build targets available from the beginning. Epic notes that this is the primary structural difference a C++ project introduces.
+
+So I would slightly revise the Deep Research recommendation from:
+
+Blueprint first, C++ second
+
+to:
+
+C++ project, Blueprint-first gameplay.
+
+That distinction fits your situation much better.
+
+And because your Quantum API Unreal plugin itself is already C++ and should expose Blueprint nodes, you get a nice three-layer architecture:
+
+QUANTUM API
+Python / quantum math
+        ↓
+UNREAL QUANTUM API PLUGIN
+C++ / Codex edits this
+        ↓
+BRAID BREAKER
+mostly Blueprints
+
+Then we only add Braid Breaker-specific C++ when it gives Codex a clear advantage or when a Blueprint starts turning into spaghetti. That’s the route I’d take.
+For the project setup

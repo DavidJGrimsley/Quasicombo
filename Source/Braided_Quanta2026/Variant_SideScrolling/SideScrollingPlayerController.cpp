@@ -71,7 +71,7 @@ void ASideScrollingPlayerController::SetupInputComponent()
 				if (ComboAttackAction)
 				{
 					GameplayExtensionsMappingContext->MapKey(ComboAttackAction, EKeys::LeftMouseButton);
-					GameplayExtensionsMappingContext->MapKey(ComboAttackAction, EKeys::Gamepad_FaceButton_Left);
+					GameplayExtensionsMappingContext->MapKey(ComboAttackAction, EKeys::Gamepad_FaceButton_Right);
 				}
 
 				if (ChargedAttackAction)

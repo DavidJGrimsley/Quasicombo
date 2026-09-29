@@ -15,11 +15,12 @@ enum class EQuasicomboQTEProgress : uint8
 class FQuasicomboQTESequence
 {
 public:
-	void Begin(bool bInTauPattern, double Now, double InWindowSeconds)
+	void Begin(bool bInTauPattern, double Now, double InWindowSeconds, int32 InRoundCount = 1)
 	{
 		bActive = true;
 		bTauPattern = bInTauPattern;
 		PromptIndex = 0;
+		RoundCount = FMath::Clamp(InRoundCount, 1, 3);
 		WindowSeconds = FMath::Max(0.1, InWindowSeconds);
 		Deadline = Now + WindowSeconds;
 		LastClockSample = Now;
@@ -27,13 +28,15 @@ public:
 
 	void Cancel() { bActive = false; }
 	bool IsActive() const { return bActive; }
-	int32 GetPromptNumber() const { return PromptIndex + 1; }
+	int32 GetPromptNumber() const { return PromptIndex % 3 + 1; }
+	int32 GetRoundNumber() const { return FMath::Min(PromptIndex / 3 + 1, RoundCount); }
+	int32 GetRoundCount() const { return RoundCount; }
 
 	EQuasicomboQTEInput GetExpectedInput() const
 	{
 		if (!bActive) return EQuasicomboQTEInput::Invalid;
-		if (PromptIndex == 2) return EQuasicomboQTEInput::Attack;
-		if (PromptIndex == 1) return bTauPattern ? EQuasicomboQTEInput::Jump : EQuasicomboQTEInput::Dash;
+		if (PromptIndex % 3 == 2) return EQuasicomboQTEInput::Attack;
+		if (PromptIndex % 3 == 1) return bTauPattern ? EQuasicomboQTEInput::Jump : EQuasicomboQTEInput::Dash;
 		return bTauPattern ? EQuasicomboQTEInput::Dash : EQuasicomboQTEInput::Attack;
 	}
 
@@ -68,7 +71,7 @@ public:
 			return EQuasicomboQTEProgress::Failed;
 		}
 		++PromptIndex;
-		if (PromptIndex == 3)
+		if (PromptIndex == 3 * RoundCount)
 		{
 			bActive = false;
 			return EQuasicomboQTEProgress::Succeeded;
@@ -81,6 +84,7 @@ private:
 	bool bActive = false;
 	bool bTauPattern = false;
 	int32 PromptIndex = 0;
+	int32 RoundCount = 1;
 	double WindowSeconds = 4.0;
 	double Deadline = 0.0;
 	double LastClockSample = 0.0;

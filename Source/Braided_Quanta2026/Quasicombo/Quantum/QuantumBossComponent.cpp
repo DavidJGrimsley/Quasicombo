@@ -5,6 +5,7 @@
 #include "QuantumApiClient.h"
 #include "QuantumApiSettings.h"
 #include "Engine/World.h"
+#include "HAL/PlatformTime.h"
 
 void UQuantumBossComponent::BeginPlay()
 {
@@ -74,7 +75,10 @@ bool UQuantumBossComponent::SetState(const TArray<FQuantumApiComplexAmplitude>& 
 	VacuumProbability = Validated.VacuumProbability;
 	TauProbability = Validated.TauProbability;
 	bFallback = bUsedFallback;
+	if (bEvolutionStarted) bEvolutionResolved = true;
 	OnQuantumStateReady.Broadcast(VacuumProbability, TauProbability, bFallback);
+	OnQuantumUpdated.Broadcast(bEvolutionStarted ? EQuasicomboQuantumUpdate::Evolution : EQuasicomboQuantumUpdate::Braid,
+		bEvolutionStarted ? PreEvolutionTau : TauProbability, TauProbability, bFallback);
 	return true;
 }
 
@@ -135,6 +139,8 @@ void UQuantumBossComponent::EvolveState()
 	if (State.Num() != 2) ApplyFixture();
 	if (State.Num() != 2) return;
 	bEvolutionStarted = true;
+	EvolutionFailureReason.Empty();
+	PreEvolutionTau = TauProbability;
 	++BraidGeneration;
 	if (!bUseLiveQuantumApi || !Client)
 	{
@@ -151,23 +157,35 @@ void UQuantumBossComponent::EvolveState()
 	Request.NumTimesteps = 2;
 	Request.Shots = 1;
 	const int32 RequestGeneration = ++EvolutionGeneration;
+	const double RequestStartedAt = FPlatformTime::Seconds();
 	const TWeakObjectPtr<UQuantumBossComponent> WeakThis(this);
 	const TSharedPtr<FQuantumApiClient> RequestClient = Client;
+	UE_LOG(LogTemp, Display, TEXT("Quasicombo: requesting time evolution (HTTP timeout %.1fs)"),
+		GetDefault<UQuantumApiSettings>()->RequestTimeoutSeconds);
 	RequestClient->RunTimeEvolution(Request, FQuantumApiRequestOptions{},
-		FQuantumApiTimeEvolutionDelegate::CreateLambda([WeakThis, RequestGeneration, RequestClient](const FQuantumApiTimeEvolutionResponse& Response)
+		FQuantumApiTimeEvolutionDelegate::CreateLambda([WeakThis, RequestGeneration, RequestStartedAt, RequestClient](const FQuantumApiTimeEvolutionResponse& Response)
 		{
 			if (!RequestClient) return;
-			if (UQuantumBossComponent* Self = WeakThis.Get(); Self &&
-				QuasicomboQuantumRules::CanAcceptEvolution(RequestGeneration, Self->EvolutionGeneration,
-					Self->bFrozen, Self->IsRunActive()) &&
-				!Self->SetState(Response.FinalStatevector, false, &Response.FinalProbabilities))
+			const double Elapsed = FPlatformTime::Seconds() - RequestStartedAt;
+			if (UQuantumBossComponent* Self = WeakThis.Get())
 			{
-				Self->RetainStateAfterEvolutionFailure(TEXT("invalid response"));
+				if (!QuasicomboQuantumRules::CanAcceptEvolution(RequestGeneration, Self->EvolutionGeneration,
+					Self->bFrozen, Self->IsRunActive()))
+				{
+					UE_LOG(LogTemp, Warning, TEXT("Quasicombo: late evolution response ignored (HTTP %d, %.2fs)"), Response.Meta.StatusCode, Elapsed);
+					return;
+				}
+				if (!Self->SetState(Response.FinalStatevector, false, &Response.FinalProbabilities))
+					Self->RetainStateAfterEvolutionFailure(TEXT("invalid response"));
+				else
+					UE_LOG(LogTemp, Display, TEXT("Quasicombo: evolution accepted (HTTP %d, %.2fs)"), Response.Meta.StatusCode, Elapsed);
 			}
 		}),
-		FQuantumApiErrorDelegate::CreateLambda([WeakThis, RequestGeneration, RequestClient](const FQuantumApiError& Error)
+		FQuantumApiErrorDelegate::CreateLambda([WeakThis, RequestGeneration, RequestStartedAt, RequestClient](const FQuantumApiError& Error)
 		{
 			if (!RequestClient) return;
+			UE_LOG(LogTemp, Warning, TEXT("Quasicombo: evolution API error %s (HTTP %d, %.2fs)"),
+				*Error.Error, Error.StatusCode, FPlatformTime::Seconds() - RequestStartedAt);
 			if (UQuantumBossComponent* Self = WeakThis.Get(); Self &&
 				QuasicomboQuantumRules::CanAcceptEvolution(RequestGeneration, Self->EvolutionGeneration,
 					Self->bFrozen, Self->IsRunActive()))
@@ -179,9 +197,31 @@ void UQuantumBossComponent::EvolveState()
 
 void UQuantumBossComponent::RetainStateAfterEvolutionFailure(const FString& Reason)
 {
+	if (bEvolutionResolved || bFrozen || !IsRunActive()) return;
 	UE_LOG(LogTemp, Warning, TEXT("Quasicombo: evolution failed (%s); retaining last valid complex state"), *Reason);
+	EvolutionFailureReason = Reason;
 	bFallback = true;
+	bEvolutionResolved = true;
 	OnQuantumStateReady.Broadcast(VacuumProbability, TauProbability, true);
+	OnQuantumUpdated.Broadcast(EQuasicomboQuantumUpdate::Evolution, PreEvolutionTau, TauProbability, true);
+}
+
+void UQuantumBossComponent::TimeoutEvolution()
+{
+	if (bEvolutionResolved || bFrozen) return;
+	++BraidGeneration;
+	++EvolutionGeneration;
+	if (!bEvolutionStarted) { PreEvolutionTau = TauProbability; bEvolutionStarted = true; }
+	RetainStateAfterEvolutionFailure(TEXT("encounter deadline"));
+}
+
+void UQuantumBossComponent::ResumeAfterRetry()
+{
+	++BraidGeneration;
+	++EvolutionGeneration;
+	bFrozen = false;
+	if (!bEvolutionResolved) bEvolutionStarted = false;
+	if (State.Num() != 2) ApplyFixture();
 }
 
 void UQuantumBossComponent::FreezeForFinisher()

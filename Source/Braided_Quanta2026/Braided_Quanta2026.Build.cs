@@ -12,6 +12,7 @@ public class Braided_Quanta2026 : ModuleRules
 			"Core",
 			"CoreUObject",
 			"Engine",
+			"AnimGraphRuntime",
 			"InputCore",
 			"EnhancedInput",
 			"AIModule",
@@ -20,6 +21,7 @@ public class Braided_Quanta2026 : ModuleRules
 			"UMG",
 			"Slate",
 			"SlateCore",
+			"Niagara",
 			"QuantumApi"
 		});
 
@@ -41,6 +43,7 @@ public class Braided_Quanta2026 : ModuleRules
 			"Braided_Quanta2026/Variant_SideScrolling/Interfaces",
 			"Braided_Quanta2026/Variant_SideScrolling/UI",
 			"Braided_Quanta2026/Quasicombo/Route",
+			"Braided_Quanta2026/Quasicombo/Enemies",
 			"Braided_Quanta2026/Quasicombo/Quantum",
 			"Braided_Quanta2026/Quasicombo/Boss",
 			"Braided_Quanta2026/Quasicombo/QTE",

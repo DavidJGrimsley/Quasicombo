@@ -22,7 +22,10 @@ public:
 	UPROPERTY(BlueprintAssignable, Category="QTE") FQuasicomboPromptChanged OnPromptChanged;
 	UPROPERTY(BlueprintAssignable, Category="QTE") FQuasicomboFinishingBeat OnFinishingBeat;
 	UPROPERTY(BlueprintAssignable, Category="QTE") FQuasicomboQTEFinished OnQTEFinished;
-	UFUNCTION(BlueprintCallable, Category="QTE") void BeginQTE(bool bTauOutcome);
+	UFUNCTION(BlueprintCallable, Category="QTE") void BeginQTE(bool bTauOutcome, int32 RoundCount = 1);
+	UFUNCTION(BlueprintCallable, Category="QTE") void CancelQTE();
+	UFUNCTION(BlueprintPure, Category="QTE") int32 GetRoundNumber() const { return Sequence.GetRoundNumber(); }
+	UFUNCTION(BlueprintPure, Category="QTE") int32 GetRoundCount() const { return Sequence.GetRoundCount(); }
 	/** Returns true whenever the QTE owns gameplay input, including a failed prompt. */
 	UFUNCTION(BlueprintCallable, Category="QTE") bool SubmitPrompt(EQuasicomboQTEInput Input);
 	UFUNCTION(BlueprintPure, Category="QTE") bool IsQTEActive() const { return Sequence.IsActive() || bFinishingBeat; }

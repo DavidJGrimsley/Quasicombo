@@ -3,22 +3,24 @@
 #include "QuasicomboBoss.h"
 #include "QuantumBossComponent.h"
 #include "QuasicomboQTEComponent.h"
+#include "QuasicomboVictoryWidget.h"
+#include "QuasicomboCreditsData.h"
 #include "SideScrollingCharacter.h"
-#include "SideScrollingCombatEnemy.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Components/Border.h"
 #include "Components/TextBlock.h"
+#include "Components/ProgressBar.h"
 #include "Kismet/GameplayStatics.h"
 #include "EnhancedInputSubsystems.h"
 #include "InputAction.h"
 #include "Engine/LocalPlayer.h"
 #include "InputCoreTypes.h"
-#include "EngineUtils.h"
 #include "Rendering/DrawElements.h"
 #include "Styling/CoreStyle.h"
 #include "Brushes/SlateRoundedBoxBrush.h"
+#include "UObject/ConstructorHelpers.h"
 
 namespace
 {
@@ -61,8 +63,20 @@ TSharedRef<SWidget> UQuasicomboHUDWidget::RebuildWidget()
 			return Line;
 		};
 		RunText = AddLine(TEXT("RunText"), FVector2D(25, 20), 22, FLinearColor::White);
-		BraidText = AddLine(TEXT("BraidText"), FVector2D(25, 53), 19, FLinearColor(0.55f, 0.9f, 1.0f));
-		BossText = AddLine(TEXT("BossText"), FVector2D(25, 84), 19, FLinearColor(1.0f, 0.65f, 0.45f));
+		BossText = AddLine(TEXT("BossText"), FVector2D(25, 55), 19, FLinearColor(1.0f, 0.65f, 0.45f));
+		auto AddBossBar = [this, Canvas](const TCHAR* Name, float Y, const FLinearColor& Color)
+		{
+			UProgressBar* Bar = WidgetTree->ConstructWidget<UProgressBar>(UProgressBar::StaticClass(), FName(Name));
+			UCanvasPanelSlot* Slot = Canvas->AddChildToCanvas(Bar);
+			Slot->SetPosition(FVector2D(25, Y));
+			Slot->SetSize(FVector2D(350, 14));
+			Bar->SetFillColorAndOpacity(Color);
+			Bar->SetVisibility(ESlateVisibility::Collapsed);
+			return Bar;
+		};
+		BossArmor.Add(AddBossBar(TEXT("BossArmor1"), 89, FLinearColor(0.1f, 0.7f, 1.0f)));
+		BossArmor.Add(AddBossBar(TEXT("BossArmor2"), 108, FLinearColor(0.7f, 0.35f, 1.0f)));
+		BossHealth = AddBossBar(TEXT("BossHealth"), 127, FLinearColor(0.8f, 0.12f, 0.08f));
 		PromptText = AddLine(TEXT("PromptText"), FVector2D::ZeroVector, 32, FLinearColor::White);
 		PromptText->SetJustification(ETextJustify::Center);
 		if (UCanvasPanelSlot* PromptSlot = Cast<UCanvasPanelSlot>(PromptText->Slot))
@@ -131,42 +145,28 @@ void UQuasicomboHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDelta
 	RunText->SetText(FText::FromString(FString::Printf(TEXT("HP %.1f/%.1f   Time %.1fs   Combo %d   Best %d"),
 		Player ? Player->GetCurrentHP() : 0.0f, Player ? Player->GetMaxHP() : 0.0f,
 		Run->GetElapsedSeconds(), Player ? Player->GetHitComboCount() : 0, Run->GetHighestCombo())));
-	FString Route = TEXT("Routes:");
-	for (EQuasicomboLane Lane : Run->GetRouteHistory()) Route += FString::Printf(TEXT(" %c"), TEXT("ABC")[static_cast<int32>(Lane)]);
-	Route += TEXT("   Braid:");
-	for (const FQuasicomboBraidOperation& Op : Run->GetBraidOperations()) Route += FString::Printf(TEXT(" s%d%s"), Op.Generator, Op.Power < 0 ? TEXT("-") : TEXT("+"));
-	BraidText->SetText(FText::FromString(Route));
-	if (Boss)
+	const bool bBossActive = Boss && Boss->GetBossPhase() != EQuasicomboBossPhase::Waiting;
+	BossText->SetText(FText::FromString(bBossActive ? Boss->GetEncounterStatus() : FString()));
+	BossHealth->SetVisibility(bBossActive ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	if (bBossActive) BossHealth->SetPercent(Boss->GetBaseHealthFraction());
+	for (int32 Index = 0; Index < BossArmor.Num(); ++Index)
 	{
-		FString Status = FString::Printf(TEXT("Boss strikes left: %d   Tau: %.0f%%"),
-			Boss->GetRemainingStrikes(), Boss->Quantum->GetTauProbability() * 100.0);
-		if (Player)
-		{
-			ASideScrollingCombatEnemy* NearestEnemy = nullptr;
-			float NearestDistance = TNumericLimits<float>::Max();
-			for (TActorIterator<ASideScrollingCombatEnemy> It(GetWorld()); It; ++It)
-			{
-				ASideScrollingCombatEnemy* Enemy = *It;
-				if (Enemy == Boss || Enemy->IsHidden() || Enemy->IsCombatDefeated()) continue;
-				const float Distance = FVector::DistSquared(Player->GetActorLocation(), Enemy->GetActorLocation());
-				if (Distance < NearestDistance) { NearestDistance = Distance; NearestEnemy = Enemy; }
-			}
-			if (NearestEnemy && NearestDistance < FMath::Square(1200.0f))
-			{
-				Status += FString::Printf(TEXT("   Enemy strikes left: %d"), NearestEnemy->GetRemainingStrikes());
-			}
-		}
-		BossText->SetText(FText::FromString(Status));
+		const bool bArmorVisible = bBossActive && Boss->GetArmorBars() > Index;
+		BossArmor[Index]->SetVisibility(bArmorVisible ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		if (bArmorVisible) BossArmor[Index]->SetPercent(Boss->GetArmorFraction(Index));
 	}
 	bool bShowPromptIcon = false;
 	if (Run->GetOutcome() == EQuasicomboRunOutcome::Victory) PromptText->SetText(FText::FromString(TEXT("VICTORY")));
 	else if (Run->GetOutcome() == EQuasicomboRunOutcome::Defeat) PromptText->SetText(FText::FromString(TEXT("RUN LOST")));
+	else if (Boss && Boss->GetBossPhase() == EQuasicomboBossPhase::Retry) PromptText->SetText(FText::FromString(TEXT("ONE MORE CHANCE")));
+	else if (Boss && Boss->GetBossPhase() == EQuasicomboBossPhase::AwaitPickup) PromptText->SetText(FText::GetEmpty());
+	else if (Boss && Boss->GetBossPhase() == EQuasicomboBossPhase::Evolution) PromptText->SetText(FText::FromString(Boss->GetEvolutionCue()));
 	else if (Boss && Boss->QTE->IsFinishingBeat()) PromptText->SetText(FText::FromString(TEXT("FINISH!")));
 	else if (Boss && Boss->QTE->IsQTEActive())
 	{
 		FKey GamepadKey;
 		const FString Prompt = DescribePromptAction(Boss->QTE->GetExpectedInput(), &GamepadKey);
-		PromptText->SetText(FText::FromString(FString::Printf(TEXT("%d/3  %s  %.1fs"), Boss->QTE->GetPromptNumber(), *Prompt, Boss->QTE->GetSecondsRemaining())));
+		PromptText->SetText(FText::FromString(FString::Printf(TEXT("Round %d/%d  |  %d/3  %s  %.1fs"), Boss->QTE->GetRoundNumber(), Boss->QTE->GetRoundCount(), Boss->QTE->GetPromptNumber(), *Prompt, Boss->QTE->GetSecondsRemaining())));
 		FString Glyph;
 		FLinearColor Color;
 		FVector2D IconSize;
@@ -183,6 +183,7 @@ void UQuasicomboHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDelta
 			bShowPromptIcon = true;
 		}
 	}
+	else if (Boss) PromptText->SetText(FText::FromString(Boss->GetEvolutionCue()));
 	else PromptText->SetText(FText::GetEmpty());
 	const ESlateVisibility IconVisibility = bShowPromptIcon ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed;
 	if (PromptIcon->GetVisibility() != IconVisibility) PromptIcon->SetVisibility(IconVisibility);
@@ -197,14 +198,14 @@ int32 UQuasicomboHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry&
 	UWorld* World = GetWorld();
 	const UQuasicomboRunSubsystem* Run = World ? World->GetSubsystem<UQuasicomboRunSubsystem>() : nullptr;
 	const FVector2D ViewSize = AllottedGeometry.GetLocalSize();
-	if (!Run || ViewSize.X < 590.0f || ViewSize.Y < 240.0f) return ContentLayer;
+	if (!Run || ViewSize.X < 590.0f || ViewSize.Y < 340.0f) return ContentLayer;
 	const AQuasicomboBoss* Boss = Cast<AQuasicomboBoss>(UGameplayStatics::GetActorOfClass(this, AQuasicomboBoss::StaticClass()));
 	if (Boss && Boss->QTE && Boss->QTE->IsQTEActive()) return ContentLayer;
 
 	const float Width = FMath::Min(475.0f, ViewSize.X - 50.0f);
 	const float Left = ViewSize.X - Width - 20.0f;
 	const float Top = ViewSize.X < 990.0f ? 140.0f : 17.0f;
-	const float TrackY[3] = {Top + 57.0f, Top + 86.0f, Top + 115.0f};
+	const float TrackY[3] = {Top + 39.0f, Top + 68.0f, Top + 97.0f};
 	const FLinearColor StrandColors[3] =
 	{
 		FLinearColor(0.20f, 0.78f, 1.0f),
@@ -226,9 +227,6 @@ int32 UQuasicomboHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry&
 		FSlateDrawElement::MakeLines(OutDrawElements, ContentLayer + 1,
 			AllottedGeometry.ToPaintGeometry(), Points, ESlateDrawEffect::None, Color, true, 3.0f);
 	};
-	DrawText(TEXT("BRAID  A top | B middle | C bottom  (start B)"), FVector2D(Left, Top), FLinearColor::White);
-	DrawText(TEXT("J1 + / J2 - / J3 +   s1: top-middle   s2: middle-bottom"),
-		FVector2D(Left, Top + 18.0f), FLinearColor(0.75f, 0.86f, 0.96f));
 	for (int32 Position = 0; Position < 3; ++Position)
 	{
 		DrawText(FString::Printf(TEXT("%c"), TEXT('A') + Position), FVector2D(Left, TrackY[Position] - 10.0f), StrandColors[Position]);
@@ -268,11 +266,36 @@ int32 UQuasicomboHUDWidget::NativePaint(const FPaintArgs& Args, const FGeometry&
 				X1, TrackY[UnderTarget], StrandColors[StrandAtPosition[UnderPosition]]);
 			DrawLine(X0, TrackY[OverPosition], X1, TrackY[OverTarget], StrandColors[StrandAtPosition[OverPosition]]);
 			DrawText(FString::Printf(TEXT("s%d%c"), Operation->Generator, Operation->Power > 0 ? TEXT('+') : TEXT('-')),
-				FVector2D(MidX - 12.0f, Top + 35.0f), FLinearColor::White);
+				FVector2D(MidX - 12.0f, Top + 13.0f), FLinearColor::White);
 			Swap(StrandAtPosition[Upper], StrandAtPosition[Upper + 1]);
 		}
 	}
+	const FString Probabilities = Boss && Boss->Quantum && Boss->Quantum->HasQuantumState()
+		? FString::Printf(TEXT("Vacuum: %.0f%%   Tau: %.0f%%"),
+			Boss->Quantum->GetVacuumProbability() * 100.0, Boss->Quantum->GetTauProbability() * 100.0)
+		: TEXT("Vacuum: --   Tau: --");
+	DrawText(Probabilities, FVector2D(Left, Top + 124.0f), FLinearColor(0.55f, 0.9f, 1.0f));
+	FString RouteLetters;
+	for (EQuasicomboLane Lane : Run->GetRouteHistory())
+	{
+		if (!RouteLetters.IsEmpty()) RouteLetters += TEXT(", ");
+		RouteLetters.AppendChar(TEXT("ABC")[static_cast<int32>(Lane)]);
+	}
+	const FString Routes = TEXT("Routes: ") + RouteLetters;
+	FString Braid = TEXT("Braid:");
+	for (const FQuasicomboBraidOperation& Operation : Operations)
+	{
+		Braid += FString::Printf(TEXT(" s%d%s"), Operation.Generator, Operation.Power < 0 ? TEXT("-") : TEXT("+"));
+	}
+	DrawText(Routes + TEXT("     ") + Braid, FVector2D(Left, Top + 146.0f), FLinearColor::White);
 	return ContentLayer + 2;
+}
+
+AQuasicomboHUDActor::AQuasicomboHUDActor()
+{
+	static ConstructorHelpers::FObjectFinder<UQuasicomboCreditsData> CreditsFinder(
+		TEXT("/Game/UI/DA_QuasicomboCredits.DA_QuasicomboCredits"));
+	if (CreditsFinder.Succeeded()) CreditsData = CreditsFinder.Object;
 }
 
 void AQuasicomboHUDActor::BeginPlay()
@@ -282,5 +305,36 @@ void AQuasicomboHUDActor::BeginPlay()
 	{
 		Widget = CreateWidget<UQuasicomboHUDWidget>(PC, UQuasicomboHUDWidget::StaticClass());
 		if (Widget) Widget->AddToViewport(5);
+	}
+	if (UQuasicomboRunSubsystem* Run = GetWorld()->GetSubsystem<UQuasicomboRunSubsystem>())
+	{
+		Run->OnRunEnded.AddDynamic(this, &AQuasicomboHUDActor::HandleRunEnded);
+		if (Run->GetOutcome() == EQuasicomboRunOutcome::Victory) HandleRunEnded(EQuasicomboRunOutcome::Victory);
+	}
+}
+
+void AQuasicomboHUDActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (UWorld* World = GetWorld())
+	{
+		if (UQuasicomboRunSubsystem* Run = World->GetSubsystem<UQuasicomboRunSubsystem>())
+		{
+			Run->OnRunEnded.RemoveDynamic(this, &AQuasicomboHUDActor::HandleRunEnded);
+		}
+	}
+	Super::EndPlay(EndPlayReason);
+}
+
+void AQuasicomboHUDActor::HandleRunEnded(EQuasicomboRunOutcome Outcome)
+{
+	if (Outcome != EQuasicomboRunOutcome::Victory || VictoryWidget) return;
+	if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
+	{
+		VictoryWidget = CreateWidget<UQuasicomboVictoryWidget>(PC, UQuasicomboVictoryWidget::StaticClass());
+		if (VictoryWidget)
+		{
+			VictoryWidget->SetCreditsData(CreditsData);
+			VictoryWidget->AddToViewport(10);
+		}
 	}
 }

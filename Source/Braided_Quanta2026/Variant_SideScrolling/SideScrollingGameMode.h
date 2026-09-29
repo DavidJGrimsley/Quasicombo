@@ -7,6 +7,7 @@
 #include "SideScrollingGameMode.generated.h"
 
 class USideScrollingUI;
+class UAudioComponent;
 
 /**
  *  Simple Side Scrolling Game Mode
@@ -31,6 +32,33 @@ protected:
 	/** Number of pickups collected by the player */
 	UPROPERTY(BlueprintReadOnly, Category="Pickups")
 	int32 PickupsCollected = 0;
+
+	/** Looping background music for the active game session. */
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> BackgroundMusicComponent;
+
+	/** Base volume for the piano music. Adjust on BP_SideScrollingGameMode. */
+	UPROPERTY(EditDefaultsOnly, Category="Audio", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float BackgroundMusicVolume = 1.0f;
+
+	FTimerHandle BackgroundMusicStartTimerHandle;
+
+	/** Independent forest ambience layer, crossfaded between loop restarts. */
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> ForestAmbienceComponent;
+
+	/** Base volume for the forest ambience. Adjust on BP_SideScrollingGameMode. */
+	UPROPERTY(EditDefaultsOnly, Category="Audio", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float ForestAmbienceVolume = 0.35f;
+
+	FTimerHandle ForestAmbienceFadeOutTimerHandle;
+	FTimerHandle ForestAmbienceRestartTimerHandle;
+	float ForestAmbienceLoopDuration = 0.0f;
+	float ForestAmbienceFadeDuration = 2.0f;
+
+	void FadeOutForestAmbience();
+	void RestartForestAmbience();
+	void StartBackgroundMusic();
 
 protected:
 

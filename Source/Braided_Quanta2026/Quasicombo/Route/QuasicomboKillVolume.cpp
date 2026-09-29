@@ -23,7 +23,8 @@ void AQuasicomboKillVolume::HandleOverlap(UPrimitiveComponent*, AActor* Other, U
 	if (!Other) return;
 	if (Other->ActorHasTag(TEXT("Player")))
 	{
-		if (UQuasicomboRunSubsystem* Run = GetWorld()->GetSubsystem<UQuasicomboRunSubsystem>()) Run->EndRun(EQuasicomboRunOutcome::Defeat);
+		if (UQuasicomboRunSubsystem* Run = GetWorld()->GetSubsystem<UQuasicomboRunSubsystem>())
+			if (!Run->TryHandleBossFailure()) Run->EndRun(EQuasicomboRunOutcome::Defeat);
 	}
 	else if (ACombatEnemy* Enemy = Cast<ACombatEnemy>(Other))
 	{

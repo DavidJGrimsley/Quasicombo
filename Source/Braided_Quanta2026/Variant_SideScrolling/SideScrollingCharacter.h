@@ -14,6 +14,11 @@ class UInputAction;
 class UAnimMontage;
 class UCombatLifeBar;
 class UWidgetComponent;
+class USkeletalMesh;
+class UAnimSequence;
+class UAnimationAsset;
+class UNiagaraSystem;
+class UNiagaraComponent;
 struct FInputActionValue;
 
 /**
@@ -62,6 +67,135 @@ protected:
 	/** Charged Attack Input Action */
 	UPROPERTY(EditAnywhere, Category="Input")
 	UInputAction* ChargedAttackAction;
+
+	/** Optional visual-only mesh override; gameplay stays on ASideScrollingCharacter. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Side Scrolling|Visual")
+	USkeletalMesh* CharacterVisualMeshOverride = nullptr;
+
+	/** Optional Animation Blueprint compatible with CharacterVisualMeshOverride. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Side Scrolling|Visual")
+	TSubclassOf<UAnimInstance> CharacterVisualAnimClassOverride;
+
+	/** Apply an explicit component transform when the replacement mesh needs capsule alignment. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Side Scrolling|Visual")
+	bool bOverrideCharacterMeshTransform = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Side Scrolling|Visual", meta=(EditCondition="bOverrideCharacterMeshTransform"))
+	FVector CharacterMeshRelativeLocation = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Side Scrolling|Visual", meta=(EditCondition="bOverrideCharacterMeshTransform"))
+	FRotator CharacterMeshRelativeRotation = FRotator::ZeroRotator;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Side Scrolling|Visual", meta=(EditCondition="bOverrideCharacterMeshTransform"))
+	FVector CharacterMeshRelativeScale = FVector::OneVector;
+
+	/**
+	 * Use animation sequences directly when the replacement mesh has no
+	 * Quasicombo-compatible Animation Blueprint. Radical Mike ships this way.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Side Scrolling|Visual|Native Animation")
+	bool bUseNativeCharacterAnimation = true;
+
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Native Animation")
+	UAnimSequence* NativeIdleAnimation = nullptr;
+
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Native Animation")
+	UAnimSequence* NativeWalkAnimation = nullptr;
+
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Native Animation")
+	UAnimSequence* NativeRunAnimation = nullptr;
+
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Native Animation")
+	UAnimSequence* NativeJumpAnimation = nullptr;
+
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Native Animation")
+	UAnimSequence* NativeDashAnimation = nullptr;
+
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Native Animation")
+	TArray<UAnimSequence*> NativeComboAnimations;
+
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Native Animation")
+	UAnimSequence* NativeChargedHoldAnimation = nullptr;
+
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Native Animation")
+	UAnimSequence* NativeChargedReleaseAnimation = nullptr;
+
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Native Animation")
+	UAnimSequence* NativeHitReactionAnimation = nullptr;
+
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Native Animation", meta=(ClampMin="0", Units="cm/s"))
+	float NativeRunSpeedThreshold = 350.0f;
+
+	/** Mike actions use full-body montages over the locomotion Animation Blueprint. */
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Mike Montages")
+	TArray<TObjectPtr<UAnimMontage>> MikeComboMontages;
+
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Mike Montages")
+	UAnimMontage* MikeChargedHoldMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Mike Montages")
+	UAnimMontage* MikeChargedReleaseMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Mike Montages")
+	UAnimMontage* MikeDashMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Mike Montages")
+	UAnimMontage* MikeHitFrontMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Mike Montages")
+	UAnimMontage* MikeHitBackMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Mike Montages")
+	UAnimMontage* MikeHitLeftMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Mike Montages")
+	UAnimMontage* MikeHitRightMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Mike Montages")
+	UAnimMontage* MikeDeathMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Mike Montages", meta=(ClampMin="0.1"))
+	float MikeComboPlayRate = 2.4f;
+
+	/** Play uppercuts more deliberately than the standard Mike punches. */
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Mike Montages", meta=(ClampMin="0.1"))
+	float MikeUppercutPlayRate = 2.0f;
+
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Mike Montages", meta=(ClampMin="0.1"))
+	float MikeChargedReleasePlayRate = 1.5f;
+
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Mike Montages", meta=(ClampMin="0.1"))
+	float MikeDashPlayRate = 1.0f;
+
+	bool bNativeCharacterAnimationActive = false;
+	bool bMikeAnimationActive = false;
+	bool bMikeComboWindowOpen = false;
+	bool bMikeChargedReleaseActive = false;
+	/** Keep rapid presses until the five-strike Mike combo is complete. */
+	int32 MikeBufferedComboInputs = 0;
+	int32 MikeComboStage = INDEX_NONE;
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimMontage> ActiveMikeAttackMontage = nullptr;
+	FTimerHandle DeathRagdollTimer;
+	FVector PendingDeathImpulse = FVector::ZeroVector;
+	FVector PendingDeathImpactPoint = FVector::ZeroVector;
+
+	/** Platforming trail system attached to Mike's feet while airborne or dashing. */
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Mike Trails")
+	TObjectPtr<UNiagaraSystem> MikeJumpTrailSystem = nullptr;
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Visual|Mike Trails")
+	FLinearColor MikeJumpTrailColor = FLinearColor(0.175f, 0.367f, 1.0f, 1.0f);
+	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraComponent> MikeLeftJumpTrail = nullptr;
+	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraComponent> MikeRightJumpTrail = nullptr;
+	void UpdateMikeJumpTrailState(bool bEnabled);
+
+	UPROPERTY(Transient)
+	UAnimationAsset* CurrentNativeAnimation = nullptr;
+
+	bool bCurrentNativeAnimationLooping = false;
+	float NativeAnimationLockUntil = 0.0f;
 
 	/** Impulse to manually push physics objects while we're in midair */
 	UPROPERTY(EditAnywhere, Category="Side Scrolling|Jump")
@@ -135,6 +269,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Side Scrolling|Dash", meta=(ClampMin="0", Units="cm/s"))
 	float DashHorizontalSpeed = 950.0f;
 
+	/** Duration used when the active rig cannot play DashMontage. */
+	UPROPERTY(EditAnywhere, Category="Side Scrolling|Dash", meta=(ClampMin="0.01", Units="s"))
+	float DashFallbackDuration = 0.97f;
+
 	UPROPERTY(EditAnywhere, Category="Side Scrolling|Dash", meta=(ClampMin="0.01", Units="s"))
 	float ChargedDashStrikeDelay = 0.15f;
 
@@ -143,6 +281,7 @@ protected:
 
 	bool bChargedDashAttack = false;
 	FTimerHandle ChargedDashStrikeTimer;
+	FTimerHandle DashFallbackTimer;
 
 	/** Dash montage ended delegate */
 	FOnMontageEnded OnDashMontageEnded;
@@ -153,7 +292,7 @@ protected:
 
 	/** Max HP */
 	UPROPERTY(EditAnywhere, Category="Combat|Damage", meta=(ClampMin=0, ClampMax=100))
-	float MaxHP = 5.0f;
+	float MaxHP = 10.0f;
 
 	/** Current HP */
 	UPROPERTY(VisibleAnywhere, Category="Combat|Damage")
@@ -174,9 +313,13 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Combat|Damage")
 	FLinearColor LifeBarColor = FLinearColor(0.1f, 0.8f, 0.2f, 1.0f);
 
-	/** Pelvis bone used when blending hit reactions/ragdoll physics */
+	/** Preferred pelvis/hips bone used when blending hit reactions/ragdoll physics. */
 	UPROPERTY(EditAnywhere, Category="Combat|Damage")
 	FName PelvisBoneName = TEXT("pelvis");
+
+	/** Additional bone names tried when PelvisBoneName does not exist on the active rig. */
+	UPROPERTY(EditAnywhere, Category="Combat|Damage")
+	TArray<FName> PhysicsAnchorBoneCandidates;
 
 	/** Runtime life bar widget */
 	UPROPERTY(Transient)
@@ -203,6 +346,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Combat|Melee Attack|Trace", meta=(ClampMin=0, ClampMax=200, Units="cm"))
 	float MeleeTraceRadius = 75.0f;
 
+	/** Socket/bone names tried when an attack notify has no valid source on the active rig. */
+	UPROPERTY(EditAnywhere, Category="Combat|Melee Attack|Trace")
+	TArray<FName> AttackTraceFallbackSockets;
+
 	/** Distance ahead of the character used to warn enemies */
 	UPROPERTY(EditAnywhere, Category="Combat|Melee Attack|Trace", meta=(ClampMin=0, ClampMax=500, Units="cm"))
 	float DangerTraceDistance = 300.0f;
@@ -214,6 +361,10 @@ protected:
 	/** Damage dealt by a melee hit */
 	UPROPERTY(EditAnywhere, Category="Combat|Melee Attack|Damage", meta=(ClampMin=0, ClampMax=100))
 	float MeleeDamage = 1.0f;
+
+	/** Extra damage added at each successive Mike combo stage. */
+	UPROPERTY(EditAnywhere, Category="Combat|Melee Attack|Damage", meta=(ClampMin=0, ClampMax=100))
+	float MikeComboDamageStep = 0.25f;
 
 	/** Horizontal knockback impulse applied by a melee hit */
 	UPROPERTY(EditAnywhere, Category="Combat|Melee Attack|Damage", meta=(ClampMin=0, ClampMax=1000, Units="cm/s"))
@@ -258,6 +409,21 @@ protected:
 
 	/** Whether the charged attack should resolve */
 	bool bHasReleasedChargedAttack = false;
+
+	/** True while charged-attack gameplay is running without a playable montage. */
+	bool bUsingFallbackChargedAttack = false;
+
+	UPROPERTY(EditAnywhere, Category="Combat|Melee Attack|Fallback", meta=(ClampMin="0.0", Units="s"))
+	float FallbackComboStrikeDelay = 0.12f;
+
+	UPROPERTY(EditAnywhere, Category="Combat|Melee Attack|Fallback", meta=(ClampMin="0.01", Units="s"))
+	float FallbackComboRecoveryTime = 0.28f;
+
+	UPROPERTY(EditAnywhere, Category="Combat|Melee Attack|Fallback", meta=(ClampMin="0.01", Units="s"))
+	float FallbackChargedRecoveryTime = 0.35f;
+
+	FTimerHandle FallbackAttackStrikeTimer;
+	FTimerHandle FallbackAttackRecoveryTimer;
 
 	/** Delay before destroying a dead character so the side-scroller controller can respawn it */
 	UPROPERTY(EditAnywhere, Category="Combat|Respawn", meta=(ClampMin=0, ClampMax=10, Units="s"))
@@ -407,6 +573,17 @@ protected:
 	/** Updates the optional life bar widget */
 	void UpdateLifeBar();
 
+	FVector ResolveAttackTraceStart(FName RequestedSource) const;
+	FName ResolvePhysicsAnchorBone() const;
+	void UpdateNativeCharacterAnimation();
+	void PlayNativeCharacterAnimation(UAnimationAsset* Animation, bool bLooping, float LockSeconds = 0.0f);
+	void PerformFallbackComboStrike();
+	void PerformFallbackChargedStrike();
+	void FinishFallbackAttack();
+	void ReleaseMikeChargedAttack();
+	void StartDeathRagdoll();
+	UAnimMontage* SelectMikeHitMontage(const AActor* DamageCauser, const FVector& DamageLocation, const FVector& DamageImpulse) const;
+
 	/** Blueprint hook for optional dash/jump trails */
 	UFUNCTION(BlueprintImplementableEvent, Category="Side Scrolling|Dash")
 	void SetJumpTrailState(bool bEnabled);
@@ -414,7 +591,27 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category="Side Scrolling|Dash")
 	void OnChargedDashStarted();
 
+	UFUNCTION(BlueprintImplementableEvent, Category="Side Scrolling|Visual|Fallback Animation")
+	void OnFallbackDashStarted();
+
+	UFUNCTION(BlueprintImplementableEvent, Category="Side Scrolling|Visual|Fallback Animation")
+	void OnFallbackComboAttackStarted(int64 StrikeSerial);
+
+	UFUNCTION(BlueprintImplementableEvent, Category="Side Scrolling|Visual|Fallback Animation")
+	void OnFallbackChargedAttackStarted(int64 StrikeSerial);
+
+	UFUNCTION(BlueprintImplementableEvent, Category="Side Scrolling|Visual|Fallback Animation")
+	void OnFallbackChargedAttackReleased(int64 StrikeSerial);
+
 public:
+
+	/** Apply the optional visual mesh/AnimBP override without replacing player gameplay. */
+	UFUNCTION(BlueprintCallable, Category="Side Scrolling|Visual")
+	void ApplyCharacterVisualOverride();
+
+	/** Log the active mesh, skeleton, physics asset, bones and sockets for rig integration debugging. */
+	UFUNCTION(Exec, BlueprintCallable, Category="Side Scrolling|Visual|Debug")
+	void DumpCharacterRigInfo() const;
 
 	/** Ends the current dash and restores gravity */
 	UFUNCTION(BlueprintCallable, Category="Side Scrolling|Dash")
@@ -423,6 +620,7 @@ public:
 	/** Clears buffered combat and movement state before the finisher takes input. */
 	UFUNCTION(BlueprintCallable, Category="Combat|Finisher")
 	void PrepareForFinisher();
+	void ResetForBossRetry(const FTransform& Transform);
 
 	/** Sets the soft collision response. True passes, False blocks */
 	void SetSoftCollision(bool bEnabled);

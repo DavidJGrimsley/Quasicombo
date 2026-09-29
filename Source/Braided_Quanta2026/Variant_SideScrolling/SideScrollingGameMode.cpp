@@ -9,10 +9,39 @@
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/PlayerStart.h"
 #include "Engine/World.h"
+#include "Components/AudioComponent.h"
+#include "Sound/SoundWave.h"
 
 void ASideScrollingGameMode::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// Begin with the forest layer, then bring in the piano after the five-second intro.
+	if (USoundWave* ForestAmbience = LoadObject<USoundWave>(nullptr, TEXT("/Game/Audio/forest_loop.forest_loop")))
+	{
+		ForestAmbience->bLooping = false;
+		ForestAmbienceLoopDuration = FMath::Max(3.0f, ForestAmbience->GetDuration());
+		ForestAmbienceFadeDuration = FMath::Min(2.0f, ForestAmbienceLoopDuration * 0.25f);
+		ForestAmbienceComponent = UGameplayStatics::SpawnSound2D(GetWorld(), ForestAmbience, ForestAmbienceVolume, 1.0f, 0.0f, nullptr, false, false);
+
+		if (ForestAmbienceComponent)
+		{
+			constexpr float ForestIntroFadeDuration = 3.0f;
+			ForestAmbienceComponent->FadeIn(ForestIntroFadeDuration, 1.0f);
+			GetWorld()->GetTimerManager().SetTimer(
+				BackgroundMusicStartTimerHandle,
+				this,
+				&ASideScrollingGameMode::StartBackgroundMusic,
+				ForestIntroFadeDuration,
+				false);
+			GetWorld()->GetTimerManager().SetTimer(
+				ForestAmbienceFadeOutTimerHandle,
+				this,
+				&ASideScrollingGameMode::FadeOutForestAmbience,
+				FMath::Max(0.1f, ForestAmbienceLoopDuration - ForestAmbienceFadeDuration),
+				false);
+		}
+	}
 
 	// create the game UI
 	APlayerController* OwningPlayer = UGameplayStatics::GetPlayerController(GetWorld(), 0);
@@ -24,6 +53,44 @@ void ASideScrollingGameMode::BeginPlay()
 	for (int32 i = 2; i <= NumberOfLocalPlayers; ++i)
 	{
 		UGameplayStatics::CreatePlayer(GetWorld(), -1, true);
+	}
+}
+
+void ASideScrollingGameMode::StartBackgroundMusic()
+{
+	if (USoundWave* BackgroundMusic = LoadObject<USoundWave>(nullptr, TEXT("/Game/Audio/Quantum_Ambience.Quantum_Ambience")))
+	{
+		BackgroundMusic->bLooping = true;
+		BackgroundMusicComponent = UGameplayStatics::SpawnSound2D(GetWorld(), BackgroundMusic, BackgroundMusicVolume, 1.0f, 0.0f, nullptr, false, false);
+	}
+}
+
+void ASideScrollingGameMode::FadeOutForestAmbience()
+{
+	if (ForestAmbienceComponent)
+	{
+		ForestAmbienceComponent->FadeOut(ForestAmbienceFadeDuration, 0.0f);
+		GetWorld()->GetTimerManager().SetTimer(
+			ForestAmbienceRestartTimerHandle,
+			this,
+			&ASideScrollingGameMode::RestartForestAmbience,
+			ForestAmbienceFadeDuration,
+			false);
+	}
+}
+
+void ASideScrollingGameMode::RestartForestAmbience()
+{
+	if (ForestAmbienceComponent)
+	{
+		ForestAmbienceComponent->Stop();
+		ForestAmbienceComponent->FadeIn(ForestAmbienceFadeDuration, 1.0f);
+		GetWorld()->GetTimerManager().SetTimer(
+			ForestAmbienceFadeOutTimerHandle,
+			this,
+			&ASideScrollingGameMode::FadeOutForestAmbience,
+			FMath::Max(0.1f, ForestAmbienceLoopDuration - ForestAmbienceFadeDuration),
+			false);
 	}
 }
 

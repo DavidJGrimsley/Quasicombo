@@ -5,6 +5,13 @@
 #include "Engine/DamageEvents.h"
 #include "Engine/StaticMeshActor.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "Components/WidgetComponent.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimSequence.h"
+#include "Engine/SkeletalMesh.h"
+#include "Materials/MaterialInterface.h"
 #include "TimerManager.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -12,6 +19,7 @@
 #include "SideScrollingCombatEnemy.h"
 #include "SideScrollingCharacter.h"
 #include "QuasicomboBoss.h"
+#include "QuasicomboEnemy.h"
 #include "Tests/AutomationCommon.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -44,7 +52,7 @@ bool FQuasicomboCombatStrikesTest::RunTest(const FString& Parameters)
 	};
 
 	ASideScrollingCombatEnemy* Light = MakeEnemy(3, 0.0f);
-	ASideScrollingCombatEnemy* Heavy = MakeEnemy(4, 1000.0f);
+	ASideScrollingCombatEnemy* Heavy = MakeEnemy(5, 1000.0f);
 	ASideScrollingCombatEnemy* SixHitProxy = MakeEnemy(6, 2000.0f);
 	UClass* PlayerClass = LoadClass<ASideScrollingCharacter>(nullptr, TEXT("/Game/Variant_SideScrolling/Blueprints/BP_SideScrollingCharacter.BP_SideScrollingCharacter_C"));
 	ASideScrollingCharacter* Player = PlayerClass
@@ -80,25 +88,15 @@ bool FQuasicomboCombatStrikesTest::RunTest(const FString& Parameters)
 	Light->ApplyDamage(1.0f, nullptr, Impact, FVector::ZeroVector);
 	TestEqual(TEXT("Post-death callbacks cannot add strikes"), Light->GetAcceptedStrikes(), 3);
 
-	for (int32 Strike = 1; Strike <= 4; ++Strike)
+	for (int32 Strike = 1; Strike <= 5; ++Strike)
 	{
 		Heavy->ApplyDamage(25.0f, nullptr, Heavy->GetActorLocation(), FVector::ZeroVector);
 		TestEqual(FString::Printf(TEXT("Heavy enemy accepts strike %d"), Strike), Heavy->GetAcceptedStrikes(), Strike);
-		TestEqual(FString::Printf(TEXT("Heavy enemy has %d strikes left"), 4 - Strike), Heavy->GetRemainingStrikes(), 4 - Strike);
-		TestEqual(FString::Printf(TEXT("Heavy enemy defeat after strike %d"), Strike), Heavy->IsCombatDefeated(), Strike == 4);
+		TestEqual(FString::Printf(TEXT("Heavy enemy has %d strikes left"), 5 - Strike), Heavy->GetRemainingStrikes(), 5 - Strike);
+		TestEqual(FString::Printf(TEXT("Heavy enemy defeat after strike %d"), Strike), Heavy->IsCombatDefeated(), Strike == 5);
 	}
 
-	TestEqual(TEXT("Boss Blueprint base requires six hits"), GetDefault<AQuasicomboBoss>()->RequiredHits, 6);
-	if (UClass* LightClass = LoadClass<ASideScrollingCombatEnemy>(nullptr, TEXT("/Game/Quasicombo/Enemies/BP_QC_LightEnemy.BP_QC_LightEnemy_C")))
-	{
-		TestEqual(TEXT("Placed light enemy Blueprint requires three hits"), LightClass->GetDefaultObject<ASideScrollingCombatEnemy>()->RequiredHits, 3);
-	}
-	else AddError(TEXT("BP_QC_LightEnemy could not be loaded"));
-	if (UClass* HeavyClass = LoadClass<ASideScrollingCombatEnemy>(nullptr, TEXT("/Game/Quasicombo/Enemies/BP_QC_HeavyEnemy.BP_QC_HeavyEnemy_C")))
-	{
-		TestEqual(TEXT("Placed heavy enemy Blueprint requires four hits"), HeavyClass->GetDefaultObject<ASideScrollingCombatEnemy>()->RequiredHits, 4);
-	}
-	else AddError(TEXT("BP_QC_HeavyEnemy could not be loaded"));
+	TestEqual(TEXT("Boss Blueprint base requires four hits"), GetDefault<AQuasicomboBoss>()->RequiredHits, 4);
 	for (int32 Strike = 1; Strike <= 6; ++Strike)
 	{
 		SixHitProxy->ApplyDamage(1.0f, nullptr, SixHitProxy->GetActorLocation(), FVector::ZeroVector);
@@ -106,6 +104,298 @@ bool FQuasicomboCombatStrikesTest::RunTest(const FString& Parameters)
 	}
 
 	World->DestroyWorld(false);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FQuasicomboEnemyVariantsTest,
+	"Quasicombo.Combat.EnemyVariants",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter
+)
+
+bool FQuasicomboEnemyVariantsTest::RunTest(const FString& Parameters)
+{
+	UClass* EnemyClass = LoadClass<AQuasicomboEnemy>(nullptr,
+		TEXT("/Game/Quasicombo/Enemies/BP_QC_Enemy.BP_QC_Enemy_C"));
+	if (!TestNotNull(TEXT("Single enemy Blueprint"), EnemyClass)) return false;
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false, TEXT("QuasicomboVariantsTest"));
+	if (!TestNotNull(TEXT("Variant test world"), World)) return false;
+	const TCHAR* WoodMaterials[3][3] = {
+		{TEXT("MI_Wood_monster_base"), TEXT("MI_leaves"), TEXT("MI_monster_orb_glow")},
+		{TEXT("MI_monster_b_base"), TEXT("MI_leaves"), TEXT("MI_monster_orb_glow")},
+		{TEXT("MI_monster_b_dark_red"), TEXT("MI_leaves_red"), TEXT("MI_monster_orb_red_brown")}
+	};
+	const TCHAR* GolemMaterials[3] = {
+		TEXT("MI_Stone_Golem_Inst"), TEXT("MI_Stone_Golem_Inst1"), TEXT("MI_Stone_Golem_Inst2")
+	};
+	for (int32 SpeciesIndex = 0; SpeciesIndex < 2; ++SpeciesIndex)
+	{
+		for (int32 TierIndex = 0; TierIndex < 3; ++TierIndex)
+		{
+			const FTransform Transform(FRotator::ZeroRotator, FVector((SpeciesIndex * 3 + TierIndex) * 1000.0f, 0.0f, 100.0f));
+			FActorSpawnParameters SpawnParams;
+			SpawnParams.bDeferConstruction = true;
+			AQuasicomboEnemy* Enemy = World->SpawnActor<AQuasicomboEnemy>(EnemyClass, Transform.GetLocation(), Transform.GetRotation().Rotator(), SpawnParams);
+			if (!TestNotNull(TEXT("Variant actor"), Enemy)) continue;
+			Enemy->AutoPossessAI = EAutoPossessAI::Disabled;
+			Enemy->Species = static_cast<EQuasicomboEnemySpecies>(SpeciesIndex);
+			Enemy->Tier = static_cast<EQuasicomboEnemyTier>(TierIndex);
+			Enemy->FinishSpawning(Transform);
+			Enemy->DispatchBeginPlay();
+			const FString Label = FString::Printf(TEXT("Species %d tier %d"), SpeciesIndex, TierIndex);
+			const int32 Hits = 3 + TierIndex + SpeciesIndex;
+			TestEqual(Label + TEXT(" hits"), Enemy->RequiredHits, Hits);
+			TestTrue(Label + TEXT(" initialized health"), FMath::IsNearlyEqual(Enemy->CurrentHP, Hits));
+			const float ExpectedDamage = (SpeciesIndex ? 1.5f : 1.0f) * (TierIndex + 1.0f);
+			TestTrue(Label + TEXT(" damage"), FMath::IsNearlyEqual(Enemy->GetConfiguredMeleeDamage(), ExpectedDamage));
+			TestTrue(Label + TEXT(" actor scale"), Enemy->GetActorScale3D().Equals(FVector(1.1f * (1.0f + TierIndex * 0.125f)), 0.001f));
+			TestTrue(Label + TEXT(" aggro range"), FMath::IsNearlyEqual(Enemy->AggroRange, 800.0f));
+			TestTrue(Label + TEXT(" melee range"), FMath::IsNearlyEqual(Enemy->AttackRange, 150.0f));
+			TestTrue(Label + TEXT(" pursuit width"), FMath::IsNearlyEqual(Enemy->PatrolHalfWidth, 700.0f));
+			TestTrue(Label + TEXT(" attack cooldown"), FMath::IsNearlyEqual(Enemy->AttackCooldown, 1.0f));
+			TestTrue(Label + TEXT(" attack windup"), FMath::IsNearlyEqual(Enemy->AttackWindup, 0.2f));
+			UWidgetComponent* Bar = Enemy->FindComponentByClass<UWidgetComponent>();
+			if (TestNotNull(Label + TEXT(" life bar component"), Bar))
+			{
+				TestNotNull(Label + TEXT(" life bar widget class"), Bar->GetWidgetClass().Get());
+				TestEqual(Label + TEXT(" life bar uses screen space"), Bar->GetWidgetSpace(), EWidgetSpace::Screen);
+			}
+			TestTrue(Label + TEXT(" capsule half height"), FMath::IsNearlyEqual(Enemy->GetCapsuleComponent()->GetUnscaledCapsuleHalfHeight(), 90.0f));
+			TestTrue(Label + TEXT(" capsule radius"), FMath::IsNearlyEqual(Enemy->GetCapsuleComponent()->GetUnscaledCapsuleRadius(), SpeciesIndex ? 40.0f : 35.0f));
+			USkeletalMeshComponent* Mesh = Enemy->GetMesh();
+			if (TestNotNull(Label + TEXT(" mesh"), Mesh->GetSkeletalMeshAsset()))
+			{
+				TestEqual(Label + TEXT(" mesh name"), Mesh->GetSkeletalMeshAsset()->GetName(),
+					FString(SpeciesIndex ? TEXT("SKM_Stone_Golem") : TEXT("SK_wood_giant_01_b")));
+				TestTrue(Label + TEXT(" mesh fit"), Mesh->GetRelativeScale3D().Equals(FVector(SpeciesIndex ? 0.55f : 1.0f), 0.001f));
+				TestTrue(Label + TEXT(" mesh floor offset"), FMath::IsNearlyEqual(Mesh->GetRelativeLocation().Z, -90.0f));
+				TestEqual(Label + TEXT(" ragdoll collision enabled"), Mesh->GetCollisionEnabled(), ECollisionEnabled::QueryAndPhysics);
+				TestEqual(Label + TEXT(" mesh uses the original physics-body object type"), Mesh->GetCollisionObjectType(), ECC_PhysicsBody);
+				TestEqual(Label + TEXT(" mesh ignores pawns"), Mesh->GetCollisionResponseToChannel(ECC_Pawn), ECR_Ignore);
+				if (SpeciesIndex)
+				{
+					UAnimSequence* Idle = Enemy->GetGolemIdleAnimation();
+					UAnimSequence* Walk = Enemy->GetGolemWalkAnimation();
+					if (TestNotNull(Label + TEXT(" golem idle"), Idle))
+						TestTrue(Label + TEXT(" idle skeleton"), Idle->GetSkeleton() == Mesh->GetSkeletalMeshAsset()->GetSkeleton());
+					if (TestNotNull(Label + TEXT(" golem walk"), Walk))
+						TestTrue(Label + TEXT(" walk skeleton"), Walk->GetSkeleton() == Mesh->GetSkeletalMeshAsset()->GetSkeleton());
+				}
+				const int32 MaterialCount = SpeciesIndex ? 1 : 3;
+				for (int32 Slot = 0; Slot < MaterialCount; ++Slot)
+				{
+					UMaterialInterface* Material = Mesh->GetMaterial(Slot);
+					if (TestNotNull(Label + FString::Printf(TEXT(" material slot %d"), Slot), Material))
+					{
+						TestEqual(Label + FString::Printf(TEXT(" material %d"), Slot), Material->GetName(),
+							FString(SpeciesIndex ? GolemMaterials[TierIndex] : WoodMaterials[TierIndex][Slot]));
+						}
+				}
+			}
+			for (int32 Strike = 1; Strike <= Hits; ++Strike)
+			{
+				Enemy->ApplyDamage(1.0f, nullptr, Enemy->GetActorLocation(), FVector::ZeroVector);
+				TestEqual(Label + FString::Printf(TEXT(" accepted strike %d"), Strike), Enemy->GetAcceptedStrikes(), Strike);
+				TestEqual(Label + FString::Printf(TEXT(" defeated on strike %d"), Strike), Enemy->IsCombatDefeated(), Strike == Hits);
+			}
+		}
+	}
+	World->DestroyWorld(false);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FQuasicomboEnemyLiveVariantsTest,
+	"Quasicombo.Combat.EnemyLiveVariants",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter
+)
+
+bool FQuasicomboEnemyLiveVariantsTest::RunTest(const FString& Parameters)
+{
+	UClass* EnemyClass = LoadClass<AQuasicomboEnemy>(nullptr,
+		TEXT("/Game/Quasicombo/Enemies/BP_QC_Enemy.BP_QC_Enemy_C"));
+	UClass* PlayerClass = LoadClass<ASideScrollingCharacter>(nullptr,
+		TEXT("/Game/Variant_SideScrolling/Blueprints/BP_SideScrollingCharacter.BP_SideScrollingCharacter_C"));
+	UStaticMesh* FloorMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
+	if (!TestNotNull(TEXT("Enemy Blueprint"), EnemyClass) || !TestNotNull(TEXT("Player Blueprint"), PlayerClass)
+		|| !TestNotNull(TEXT("Floor mesh"), FloorMesh)) return false;
+	for (int32 SpeciesIndex = 0; SpeciesIndex < 2; ++SpeciesIndex)
+	{
+		for (int32 TierIndex = 0; TierIndex < 3; ++TierIndex)
+		{
+			const FString Label = FString::Printf(TEXT("Species %d tier %d"), SpeciesIndex, TierIndex);
+			FTestWorldWrapper Fixture;
+			if (!Fixture.CreateTestWorld(EWorldType::Game))
+			{
+				Fixture.ForwardErrorMessages(this);
+				return false;
+			}
+			UWorld* World = Fixture.GetTestWorld();
+			AStaticMeshActor* Floor = World->SpawnActor<AStaticMeshActor>(FVector(3000.0f, 0.0f, 0.0f), FRotator::ZeroRotator);
+			Floor->GetStaticMeshComponent()->SetStaticMesh(FloorMesh);
+			Floor->SetActorScale3D(FVector(20.0f, 3.0f, 1.0f));
+			Floor->GetStaticMeshComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+			const FTransform Transform(FRotator::ZeroRotator, FVector(3000.0f, 0.0f, 140.0f));
+			FActorSpawnParameters Params;
+			Params.bDeferConstruction = true;
+			AQuasicomboEnemy* Enemy = World->SpawnActor<AQuasicomboEnemy>(EnemyClass,
+				Transform.GetLocation(), Transform.GetRotation().Rotator(), Params);
+			if (!TestNotNull(Label + TEXT(" enemy"), Enemy)) return false;
+			Enemy->Species = static_cast<EQuasicomboEnemySpecies>(SpeciesIndex);
+			Enemy->Tier = static_cast<EQuasicomboEnemyTier>(TierIndex);
+			Enemy->FinishSpawning(Transform);
+			ASideScrollingCharacter* Player = World->SpawnActor<ASideScrollingCharacter>(PlayerClass,
+				FVector(3300.0f, 0.0f, 140.0f), FRotator::ZeroRotator);
+			if (!TestNotNull(Label + TEXT(" player"), Player)) return false;
+			if (!Fixture.BeginPlayInTestWorld())
+			{
+				Fixture.ForwardErrorMessages(this);
+				return false;
+			}
+			UWidgetComponent* LiveBar = Enemy->FindComponentByClass<UWidgetComponent>();
+			if (TestNotNull(Label + TEXT(" runtime life bar component"), LiveBar))
+				TestNotNull(Label + TEXT(" runtime life bar widget"), LiveBar->GetUserWidgetObject());
+			APlayerController* Controller = World->SpawnActor<APlayerController>();
+			Controller->Possess(Player);
+			Player->GetCharacterMovement()->DisableMovement();
+			TestTrue(Label + TEXT(" capsule collides"), Enemy->GetCapsuleComponent()->GetCollisionEnabled() != ECollisionEnabled::NoCollision);
+			static_cast<AActor*>(Enemy)->Tick(0.016f);
+			TestEqual(Label + TEXT(" approaches"), Enemy->CombatState, ESideCombatState::Approach);
+			Fixture.TickTestWorld(0.15f);
+			TestTrue(Label + TEXT(" moves toward player"), Enemy->GetActorLocation().X > 3000.0f);
+			const float ExpectedCenterZ = 50.0f + 90.0f * 1.1f * (1.0f + TierIndex * 0.125f);
+			TestTrue(Label + TEXT(" capsule rests on floor"), FMath::IsNearlyEqual(Enemy->GetActorLocation().Z, ExpectedCenterZ, 3.0f));
+			Player->SetActorLocation(Enemy->GetActorLocation() + FVector(80.0f, 0.0f, 0.0f));
+			const float HealthBefore = Player->GetCurrentHP();
+			static_cast<AActor*>(Enemy)->Tick(0.016f);
+			TestEqual(Label + TEXT(" begins one attack"), Enemy->CombatState, ESideCombatState::Attack);
+			for (int32 Step = 0; Step < 12; ++Step) Fixture.TickTestWorld(0.1f);
+			const float ExpectedHitDamage = (SpeciesIndex ? 1.5f : 1.0f) * (TierIndex + 1.0f);
+			TestTrue(Label + TEXT(" deals one configured hit"), FMath::IsNearlyEqual(Player->GetCurrentHP(),
+				HealthBefore - ExpectedHitDamage, 0.02f));
+			const int32 Hits = Enemy->RequiredHits;
+			for (int32 Strike = 1; Strike < Hits; ++Strike)
+				Enemy->ApplyDamage(1.0f, nullptr, Enemy->GetActorLocation(), FVector::ZeroVector);
+			Enemy->ApplyDamage(1.0f, nullptr, Enemy->GetActorLocation() + FVector(0.0f, 0.0f, 50.0f), FVector(250.0f, 0.0f, 300.0f));
+			TestTrue(Label + TEXT(" death starts ragdoll"), Enemy->GetMesh()->IsSimulatingPhysics());
+			for (int32 Step = 0; Step < 5; ++Step) Fixture.TickTestWorld(0.1f);
+			const USkeletalMeshComponent* Corpse = Enemy->GetMesh();
+			if (Corpse->GetBoneIndex(TEXT("pelvis")) != INDEX_NONE)
+				TestTrue(Label + TEXT(" corpse stays nearby"), FVector::Dist(Corpse->GetBoneLocation(TEXT("pelvis")), Enemy->GetActorLocation()) < 400.0f);
+			if (Corpse->GetBoneIndex(TEXT("head")) != INDEX_NONE && Corpse->GetBoneIndex(TEXT("pelvis")) != INDEX_NONE)
+				TestTrue(Label + TEXT(" head stays attached"), FVector::Dist(Corpse->GetBoneLocation(TEXT("head")), Corpse->GetBoneLocation(TEXT("pelvis"))) < 300.0f);
+			Fixture.ForwardErrorMessages(this);
+			if (Fixture.HasFailed()) return false;
+		}
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FQuasicomboEnemyHitReactionTest,
+	"Quasicombo.Combat.EnemyHitReaction",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter
+)
+
+bool FQuasicomboEnemyHitReactionTest::RunTest(const FString& Parameters)
+{
+	UStaticMesh* FloorMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
+	if (!TestNotNull(TEXT("Hit reaction floor"), FloorMesh)) return false;
+	UClass* EnemyClass = LoadClass<AQuasicomboEnemy>(nullptr,
+		TEXT("/Game/Quasicombo/Enemies/BP_QC_Enemy.BP_QC_Enemy_C"));
+	if (!TestNotNull(TEXT("Hit reaction enemy"), EnemyClass)) return false;
+	UClass* PlayerClass = LoadClass<ASideScrollingCharacter>(nullptr,
+		TEXT("/Game/Variant_SideScrolling/Blueprints/BP_SideScrollingCharacter.BP_SideScrollingCharacter_C"));
+	if (!TestNotNull(TEXT("Hit reaction player"), PlayerClass)) return false;
+	for (int32 Variant = 0; Variant < 6; ++Variant)
+	{
+		const FString Label = FString::Printf(TEXT("Species %d tier %d"), Variant / 3, Variant % 3);
+		FTestWorldWrapper Fixture;
+		if (!Fixture.CreateTestWorld(EWorldType::Game)) return false;
+		UWorld* World = Fixture.GetTestWorld();
+		AStaticMeshActor* Floor = World->SpawnActor<AStaticMeshActor>(FVector(3000.0f, 0.0f, 0.0f), FRotator::ZeroRotator);
+		Floor->GetStaticMeshComponent()->SetStaticMesh(FloorMesh);
+		Floor->SetActorScale3D(FVector(50.0f, 10.0f, 1.0f));
+		Floor->GetStaticMeshComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		const FTransform Transform(FRotator::ZeroRotator, FVector(3000.0f, 0.0f, 200.0f));
+		FActorSpawnParameters Params;
+		Params.bDeferConstruction = true;
+		AQuasicomboEnemy* Enemy = World->SpawnActor<AQuasicomboEnemy>(EnemyClass,
+			Transform.GetLocation(), Transform.GetRotation().Rotator(), Params);
+		if (!TestNotNull(TEXT("Hit reaction actor"), Enemy)) return false;
+		Enemy->Species = static_cast<EQuasicomboEnemySpecies>(Variant / 3);
+		Enemy->Tier = static_cast<EQuasicomboEnemyTier>(Variant % 3);
+		Enemy->FinishSpawning(Transform);
+		USkeletalMeshComponent* Body = Enemy->GetMesh();
+		Body->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+		Enemy->AggroRange = 0.0f;
+		if (!Fixture.BeginPlayInTestWorld()) return false;
+		for (int32 Step = 0; Step < 60; ++Step) Fixture.TickTestWorld(1.0f / 60.0f);
+		TestNotNull(Label + TEXT(" movement controller"), Enemy->GetController());
+		TestTrue(Label + TEXT(" starts on the floor"), Enemy->GetCharacterMovement()->IsMovingOnGround());
+		const float ActorStartZ = Enemy->GetActorLocation().Z;
+		const float PelvisStartZ = Body->GetBoneLocation(TEXT("pelvis")).Z;
+		float MaxActorZ = ActorStartZ;
+		float MaxPelvisZ = PelvisStartZ;
+		ASideScrollingCharacter* Player = World->SpawnActor<ASideScrollingCharacter>(PlayerClass,
+			Enemy->GetActorLocation() - FVector(110.0f, 0.0f, 0.0f), FRotator::ZeroRotator);
+		if (!TestNotNull(TEXT("Punching player"), Player)) return false;
+		Player->SetActorScale3D(FVector(1.3f));
+		Player->GetCharacterMovement()->DisableMovement();
+		Player->GetMesh()->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+		for (int32 Step = 0; Step < 10; ++Step) Fixture.TickTestWorld(1.0f / 60.0f);
+		Player->DoComboAttackStart();
+		Player->DoAttackTrace(NAME_None);
+		TestEqual(Label + TEXT(" real player punch accepts one strike"), Enemy->GetAcceptedStrikes(), 1);
+		Player->DoAttackTrace(NAME_None);
+		TestEqual(Label + TEXT(" same punch cannot strike twice"), Enemy->GetAcceptedStrikes(), 1);
+		if (UAnimInstance* Anim = Player->GetMesh()->GetAnimInstance()) Anim->StopAllMontages(0.0f);
+		float MaxPunchVelocityZ = 0.0f;
+		for (int32 Step = 0; Step < 48; ++Step)
+		{
+			Fixture.TickTestWorld(1.0f / 60.0f);
+			MaxActorZ = FMath::Max(MaxActorZ, static_cast<float>(Enemy->GetActorLocation().Z));
+			MaxPelvisZ = FMath::Max(MaxPelvisZ, static_cast<float>(Body->GetBoneLocation(TEXT("pelvis")).Z));
+			MaxPunchVelocityZ = FMath::Max(MaxPunchVelocityZ, static_cast<float>(Enemy->GetVelocity().Z));
+		}
+		AddInfo(FString::Printf(TEXT("RECOIL variant=%d realPunch actorRise=%f pelvisRise=%f upVelocity=%f"), Variant, MaxActorZ - ActorStartZ, MaxPelvisZ - PelvisStartZ, MaxPunchVelocityZ));
+		TestTrue(Label + TEXT(" original single punch hop"), MaxActorZ - ActorStartZ < 50.0f);
+		for (int32 Strike = Enemy->GetAcceptedStrikes() + 1; Strike < Enemy->RequiredHits; ++Strike)
+		{
+			Enemy->ApplyDamage(1.0f, nullptr, Body->GetBoneLocation(TEXT("pelvis")) + FVector(0.0f, 0.0f, 40.0f), FVector(250.0f, 0.0f, 300.0f));
+			TestEqual(Label + TEXT(" counts rapid strikes"), Enemy->GetAcceptedStrikes(), Strike);
+			TestFalse(Label + TEXT(" live pelvis remains anchored"), Body->IsSimulatingPhysics(TEXT("pelvis")));
+			TestTrue(Label + TEXT(" live mesh remains attached"), Body->GetAttachParent() == Enemy->GetCapsuleComponent());
+			for (int32 Step = 0; Step < 10; ++Step)
+			{
+				Fixture.TickTestWorld(1.0f / 60.0f);
+				MaxActorZ = FMath::Max(MaxActorZ, static_cast<float>(Enemy->GetActorLocation().Z));
+				MaxPelvisZ = FMath::Max(MaxPelvisZ, static_cast<float>(Body->GetBoneLocation(TEXT("pelvis")).Z));
+			}
+		}
+		for (int32 Step = 0; Step < 48; ++Step)
+		{
+			Fixture.TickTestWorld(1.0f / 60.0f);
+			MaxActorZ = FMath::Max(MaxActorZ, static_cast<float>(Enemy->GetActorLocation().Z));
+			MaxPelvisZ = FMath::Max(MaxPelvisZ, static_cast<float>(Body->GetBoneLocation(TEXT("pelvis")).Z));
+		}
+		AddInfo(FString::Printf(TEXT("RECOIL variant=%d nonlethal actorRise=%f pelvisRise=%f"), Variant, MaxActorZ - ActorStartZ, MaxPelvisZ - PelvisStartZ));
+		TestTrue(Label + TEXT(" rapid combo does not stack upward launches"), MaxActorZ - ActorStartZ < 50.0f);
+		TestTrue(Label + TEXT(" pelvis does not fly away during a combo"), MaxPelvisZ - PelvisStartZ < 100.0f);
+		const float DeathStartZ = Body->GetBoneLocation(TEXT("pelvis")).Z;
+		float MaxDeathZ = DeathStartZ;
+		Enemy->ApplyDamage(1.0f, nullptr, Body->GetBoneLocation(TEXT("pelvis")) + FVector(0.0f, 0.0f, 40.0f), FVector(250.0f, 0.0f, 300.0f));
+		TestTrue(Label + TEXT(" final hit starts the original ragdoll"), Body->IsSimulatingPhysics(TEXT("pelvis")));
+		for (int32 Step = 0; Step < 120; ++Step)
+		{
+			Fixture.TickTestWorld(1.0f / 60.0f);
+			MaxDeathZ = FMath::Max(MaxDeathZ, static_cast<float>(Body->GetBoneLocation(TEXT("pelvis")).Z));
+		}
+		AddInfo(FString::Printf(TEXT("RECOIL variant=%d lethal pelvisRise=%f"), Variant, MaxDeathZ - DeathStartZ));
+		TestTrue(Label + TEXT(" corpse launch stays within the original reaction range"), MaxDeathZ - DeathStartZ < 100.0f);
+		Fixture.ForwardErrorMessages(this);
+		if (Fixture.HasFailed()) return false;
+	}
 	return true;
 }
 
@@ -165,6 +455,120 @@ bool FQuasicomboSideEnemyAttackTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FQuasicomboEnemyAnimationTest,
+	"Quasicombo.Combat.EnemyAnimation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter
+)
+
+bool FQuasicomboEnemyAnimationTest::RunTest(const FString& Parameters)
+{
+	FTestWorldWrapper Fixture;
+	if (!Fixture.CreateTestWorld(EWorldType::Game))
+	{
+		Fixture.ForwardErrorMessages(this);
+		return false;
+	}
+
+	UWorld* World = Fixture.GetTestWorld();
+	USkeletalMesh* WoodMesh = LoadObject<USkeletalMesh>(nullptr,
+		TEXT("/Game/Wood_Monster/CharacterParts/Meshes/SK_wood_giant_01_b.SK_wood_giant_01_b"));
+	UAnimMontage* Combo = LoadObject<UAnimMontage>(nullptr,
+		TEXT("/Game/Quasicombo/Enemies/WoodMonster/Anims/WM_AM_ComboAttack.WM_AM_ComboAttack"));
+	UAnimMontage* Charged = LoadObject<UAnimMontage>(nullptr,
+		TEXT("/Game/Quasicombo/Enemies/WoodMonster/Anims/WM_AM_ChargedAttack.WM_AM_ChargedAttack"));
+	USkeletalMesh* GolemMesh = LoadObject<USkeletalMesh>(nullptr,
+		TEXT("/Game/Stone_Golem/mesh/SKM_Stone_Golem.SKM_Stone_Golem"));
+	UAnimMontage* GolemCombo = LoadObject<UAnimMontage>(nullptr,
+		TEXT("/Game/Quasicombo/Enemies/StoneGolem/Golem_WM_AM_ComboAttack.Golem_WM_AM_ComboAttack"));
+	if (!TestNotNull(TEXT("Wood mesh"), WoodMesh)
+		|| !TestNotNull(TEXT("Wood combo montage"), Combo)
+		|| !TestNotNull(TEXT("Wood charged montage"), Charged)
+		|| !TestNotNull(TEXT("Golem mesh"), GolemMesh)
+		|| !TestNotNull(TEXT("Golem combo montage"), GolemCombo))
+	{
+		Fixture.ForwardErrorMessages(this);
+		return false;
+	}
+	TestTrue(TEXT("Combo montage uses the Wood skeleton"), Combo->GetSkeleton() == WoodMesh->GetSkeleton());
+	TestTrue(TEXT("Charged montage uses the Wood skeleton"), Charged->GetSkeleton() == WoodMesh->GetSkeleton());
+	TestEqual(TEXT("Combo retains all three sections"), Combo->GetNumSections(), 3);
+	TestTrue(TEXT("Charged montage retains the release section"), Charged->IsValidSectionName(TEXT("Attack")));
+	TestTrue(TEXT("Retargeted golem combo uses the golem skeleton"), GolemCombo->GetSkeleton() == GolemMesh->GetSkeleton());
+	TestEqual(TEXT("Retargeted combo keeps its three sections"), GolemCombo->GetNumSections(), 3);
+
+	UClass* EnemyClass = LoadClass<AQuasicomboEnemy>(nullptr,
+		TEXT("/Game/Quasicombo/Enemies/BP_QC_Enemy.BP_QC_Enemy_C"));
+	if (!TestNotNull(TEXT("Enemy Blueprint class"), EnemyClass)) return false;
+	AQuasicomboEnemy* Enemies[2] = {};
+	for (int32 Index = 0; Index < 2; ++Index)
+	{
+		const FTransform Transform(FRotator::ZeroRotator, FVector(Index * 1000.0f, 0.0f, 100.0f));
+		FActorSpawnParameters Params;
+		Params.bDeferConstruction = true;
+		Enemies[Index] = World->SpawnActor<AQuasicomboEnemy>(EnemyClass,
+			Transform.GetLocation(), Transform.GetRotation().Rotator(), Params);
+		if (!TestNotNull(TEXT("Enemy actor"), Enemies[Index])) return false;
+		Enemies[Index]->AutoPossessAI = EAutoPossessAI::Disabled;
+		Enemies[Index]->Species = Index ? EQuasicomboEnemySpecies::StoneGolem : EQuasicomboEnemySpecies::WoodMonster;
+		Enemies[Index]->FinishSpawning(Transform);
+	}
+	UClass* PlayerClass = LoadClass<ASideScrollingCharacter>(nullptr,
+		TEXT("/Game/Variant_SideScrolling/Blueprints/BP_SideScrollingCharacter.BP_SideScrollingCharacter_C"));
+	ASideScrollingCharacter* Player = PlayerClass
+		? World->SpawnActor<ASideScrollingCharacter>(PlayerClass, FVector(80.0f, 0.0f, 100.0f), FRotator::ZeroRotator)
+		: nullptr;
+	if (!TestNotNull(TEXT("Side-scroller player"), Player)) return false;
+	if (!Fixture.BeginPlayInTestWorld())
+	{
+		Fixture.ForwardErrorMessages(this);
+		return false;
+	}
+
+	for (int32 Index = 0; Index < 2; ++Index)
+	{
+		USkeletalMeshComponent* Mesh = Enemies[Index]->GetMesh();
+		TestTrue(TEXT("Enemy keeps its configured mesh during Play"), Mesh->GetSkeletalMeshAsset() == (Index ? GolemMesh : WoodMesh));
+		UAnimInstance* Anim = Mesh->GetAnimInstance();
+		if (!TestNotNull(TEXT("Enemy animation instance"), Anim)) continue;
+		UAnimMontage* Attack = Index ? GolemCombo : Combo;
+		TestTrue(TEXT("Species combo montage plays"), Anim->Montage_Play(Attack) > 0.0f);
+		Anim->Montage_Stop(0.0f, Attack);
+		if (!Index)
+		{
+			TestTrue(TEXT("Wood charged montage plays"), Anim->Montage_Play(Charged) > 0.0f);
+			Anim->Montage_Stop(0.0f, Charged);
+		}
+	}
+	APlayerController* Controller = World->SpawnActor<APlayerController>();
+	if (!TestNotNull(TEXT("Player controller"), Controller)) return false;
+	Controller->Possess(Player);
+	const float HealthBefore = Player->GetCurrentHP();
+	static_cast<AActor*>(Enemies[0])->Tick(0.016f);
+	TestEqual(TEXT("Wood enemy starts its animated attack"), Enemies[0]->CombatState, ESideCombatState::Attack);
+	for (int32 Step = 0; Step < 3; ++Step) Fixture.TickTestWorld(0.1f);
+	TestTrue(TEXT("Player is unharmed before the visible strike"), FMath::IsNearlyEqual(Player->GetCurrentHP(), HealthBefore));
+	for (int32 Step = 0; Step < 2; ++Step) Fixture.TickTestWorld(0.1f);
+	TestTrue(TEXT("Retargeted attack notify damages the player before the fallback timer"),
+		Player->GetCurrentHP() < HealthBefore);
+	TestTrue(TEXT("Wood animation deals one 1.0 HP strike"), FMath::IsNearlyEqual(Player->GetCurrentHP(), HealthBefore - 1.0f, 0.01f));
+	Player->SetActorLocation(FVector(-2000.0f, 0.0f, 100.0f));
+	for (int32 Step = 0; Step < 8; ++Step) Fixture.TickTestWorld(0.1f);
+	TestFalse(TEXT("Wood enemy finishes after one combo section"), Enemies[0]->GetMesh()->GetAnimInstance()->Montage_IsPlaying(Combo));
+	Player->SetActorLocation(FVector(1080.0f, 0.0f, 100.0f));
+	const float GolemHealthBefore = Player->GetCurrentHP();
+	static_cast<AActor*>(Enemies[1])->Tick(0.016f);
+	TestEqual(TEXT("Golem starts its retargeted attack"), Enemies[1]->CombatState, ESideCombatState::Attack);
+	for (int32 Step = 0; Step < 5; ++Step) Fixture.TickTestWorld(0.1f);
+	TestTrue(TEXT("Golem's one strike deals 1.5 player HP"),
+		FMath::IsNearlyEqual(Player->GetCurrentHP(), GolemHealthBefore - 1.5f, 0.01f));
+	Player->SetActorLocation(FVector(-2000.0f, 0.0f, 100.0f));
+	for (int32 Step = 0; Step < 7; ++Step) Fixture.TickTestWorld(0.1f);
+	TestFalse(TEXT("Golem finishes after one strike"), Enemies[1]->GetMesh()->GetAnimInstance()->Montage_IsPlaying(GolemCombo));
+	Fixture.ForwardErrorMessages(this);
+	return !Fixture.HasFailed();
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FQuasicomboPlayerHealthRegenerationTest,
 	"Quasicombo.Combat.PlayerHealthRegeneration",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter
@@ -193,8 +597,8 @@ bool FQuasicomboPlayerHealthRegenerationTest::RunTest(const FString& Parameters)
 	}
 	Player->GetCharacterMovement()->DisableMovement();
 	const float Max = Player->GetMaxHP();
-	TestTrue(TEXT("Player max health rises by 20%"), FMath::IsNearlyEqual(Max, AuthoredMax * 1.2f, 0.001f));
-	TestTrue(TEXT("Player starts at the increased maximum"), FMath::IsNearlyEqual(Player->GetCurrentHP(), Max, 0.001f));
+	TestTrue(TEXT("Player max health is 10"), FMath::IsNearlyEqual(Max, 10.0f, 0.001f));
+	TestTrue(TEXT("Player starts at the increased maximum"), FMath::IsNearlyEqual(Player->GetCurrentHP(), 10.0f, 0.001f));
 
 	Player->TakeDamage(2.0f, FDamageEvent(), nullptr, nullptr);
 	const float DamagedHP = Player->GetCurrentHP();

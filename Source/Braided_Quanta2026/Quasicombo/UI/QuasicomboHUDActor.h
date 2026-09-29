@@ -9,6 +9,9 @@
 class UTextBlock;
 class UBorder;
 class UInputAction;
+class UProgressBar;
+class UQuasicomboVictoryWidget;
+class UQuasicomboCreditsData;
 struct FKey;
 
 UCLASS()
@@ -24,8 +27,9 @@ public:
 		bool bParentEnabled) const override;
 private:
 	UPROPERTY() TObjectPtr<UTextBlock> RunText;
-	UPROPERTY() TObjectPtr<UTextBlock> BraidText;
 	UPROPERTY() TObjectPtr<UTextBlock> BossText;
+	UPROPERTY() TObjectPtr<UProgressBar> BossHealth;
+	UPROPERTY() TArray<TObjectPtr<UProgressBar>> BossArmor;
 	UPROPERTY() TObjectPtr<UTextBlock> PromptText;
 	UPROPERTY() TObjectPtr<UBorder> PromptIcon;
 	UPROPERTY() TObjectPtr<UTextBlock> PromptIconText;
@@ -40,7 +44,12 @@ class AQuasicomboHUDActor : public AActor
 {
 	GENERATED_BODY()
 public:
+	AQuasicomboHUDActor();
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 private:
+	UFUNCTION() void HandleRunEnded(EQuasicomboRunOutcome Outcome);
 	UPROPERTY() TObjectPtr<UQuasicomboHUDWidget> Widget;
+	UPROPERTY() TObjectPtr<UQuasicomboVictoryWidget> VictoryWidget;
+	UPROPERTY(EditDefaultsOnly, Category="Quasicombo|UI") TObjectPtr<UQuasicomboCreditsData> CreditsData;
 };

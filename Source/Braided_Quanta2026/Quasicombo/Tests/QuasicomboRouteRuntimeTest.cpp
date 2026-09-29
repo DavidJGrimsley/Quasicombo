@@ -154,4 +154,43 @@ bool FQuasicomboRouteRuntimeTest::RunTest(const FString& Parameters)
 	return !Fixture.HasFailed();
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FQuasicomboEmptyEncounterTest,
+	"Quasicombo.Route.EmptyEncounter",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter
+)
+
+bool FQuasicomboEmptyEncounterTest::RunTest(const FString& Parameters)
+{
+	FTestWorldWrapper Fixture;
+	if (!Fixture.CreateTestWorld(EWorldType::Game))
+	{
+		Fixture.ForwardErrorMessages(this);
+		return false;
+	}
+	UWorld* World = Fixture.GetTestWorld();
+	AQuasicomboRouteSection* Section = Spawn<AQuasicomboRouteSection>(World, 0.0f);
+	Section->SectionNumber = 1;
+	AQuasicomboRouteLeg* Leg = Spawn<AQuasicomboRouteLeg>(World, 1000.0f);
+	Leg->Lane = EQuasicomboLane::A;
+	Leg->Section = Section;
+	Leg->ForwardBarrier = Spawn<AQuasicomboBarrier>(World, 1350.0f);
+	Section->Legs.Add(Leg);
+	if (!Fixture.BeginPlayInTestWorld())
+	{
+		Fixture.ForwardErrorMessages(this);
+		return false;
+	}
+	ACharacter* Player = Spawn<ACharacter>(World, 1000.0f);
+	Player->Tags.AddUnique(TEXT("Player"));
+	APlayerController* Controller = Spawn<APlayerController>(World, 0.0f);
+	Controller->Possess(Player);
+	TestTrue(TEXT("Empty encounter starts behind a closed exit"), Leg->ForwardBarrier->IsClosed());
+	EnterTrigger(Leg, Player);
+	TestTrue(TEXT("Empty encounter clears on selection"), Leg->IsCleared());
+	TestFalse(TEXT("Empty encounter opens its exit immediately"), Leg->ForwardBarrier->IsClosed());
+	Fixture.ForwardErrorMessages(this);
+	return !Fixture.HasFailed();
+}
+
 #endif
