@@ -274,14 +274,10 @@ void ASideScrollingCombatEnemy::ApplyAcceptedStrikeDamage(float Damage, AActor* 
 {
 	if (bLastStrikeTriggeredHitReaction)
 	{
-		const float ReactionScale = 1.0f - GetResistance();
-		ACombatEnemy::ApplyDamage(Damage, DamageCauser, DamageLocation, DamageImpulse * ReactionScale);
-		if (CurrentHP > 0.0f)
-		{
-			// The stock combat enemy uses a 0.5 partial-ragdoll blend. Fade that
-			// down with resistance so tougher enemies stay more planted.
-			GetMesh()->SetPhysicsBlendWeight(0.5f * ReactionScale);
-		}
+		// When a hit gets through resistance, keep the normal reaction strength.
+		// The resistance value controls how often hits are shrugged off, so 0.6
+		// means roughly 60% resisted rather than weakening every reaction twice.
+		ACombatEnemy::ApplyDamage(Damage, DamageCauser, DamageLocation, DamageImpulse);
 		return;
 	}
 
