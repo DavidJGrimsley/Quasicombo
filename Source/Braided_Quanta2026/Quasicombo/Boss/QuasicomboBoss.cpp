@@ -26,7 +26,7 @@
 
 namespace
 {
-float BossResistanceForArmorBars(int32 ArmorBars)
+float BossToughnessForArmorBars(int32 ArmorBars)
 {
 	return FMath::Lerp(0.6f, 1.0f, FMath::Clamp(static_cast<float>(ArmorBars) / 2.0f, 0.0f, 1.0f));
 }
@@ -51,7 +51,7 @@ AQuasicomboBoss::AQuasicomboBoss()
 	AttackTimeout = 3.5f;
 	MeleeDamage = 2.0f;
 	TailDamage = 4.0f;
-	SetResistance(BossResistanceForArmorBars(0));
+	SetAutomaticToughness(BossToughnessForArmorBars(0));
 	Quantum = CreateDefaultSubobject<UQuantumBossComponent>(TEXT("QuantumState"));
 	QTE = CreateDefaultSubobject<UQuasicomboQTEComponent>(TEXT("FinalQTE"));
 	static ConstructorHelpers::FObjectFinder<USkeletalMesh> Body(TEXT("/Game/Lizardman_Berserker/Mesh/SeparatedMesh/SK_Body"));
@@ -111,7 +111,7 @@ void AQuasicomboBoss::BeginPlay()
 	HitsPerArmorBar = FMath::Max(1, HitsPerArmorBar);
 	RequiredHits = BaseHealthHits;
 	BaseHitsRemaining = BaseHealthHits;
-	SetResistance(BossResistanceForArmorBars(0));
+	SetAutomaticToughness(BossToughnessForArmorBars(0));
 	Super::BeginPlay();
 	BossStartTransform = GetActorTransform();
 	for (USkeletalMeshComponent* Part : ArmorPieces) Part->SetLeaderPoseComponent(GetMesh());
@@ -262,14 +262,14 @@ void AQuasicomboBoss::ResolveAcceptedStrike(AActor* Causer, const FVector& Locat
 {
 	if (ArmorHitsRemaining > 0) --ArmorHitsRemaining;
 	else BaseHitsRemaining = FMath::Max(0, BaseHitsRemaining - 1);
-	SetResistance(BossResistanceForArmorBars(GetArmorBars()));
+	SetAutomaticToughness(BossToughnessForArmorBars(GetArmorBars()));
 	if (BaseHitsRemaining == 0 && ArmorHitsRemaining == 0)
 	{
 		HandleRequiredHitsReached(Causer, Location, Impulse);
 	}
 	else
 	{
-		// Keep total HP/effects in sync. A resisted strike still damages the boss,
+		// Keep total HP/effects in sync. A toughness-resisted strike still damages the boss,
 		// but does not cancel its attack or force the authored stagger animation.
 		ApplyAcceptedStrikeDamage(1.0f, Causer, Location, FVector::ZeroVector);
 		GetMesh()->SetPhysicsBlendWeight(0.0f);
@@ -317,7 +317,7 @@ void AQuasicomboBoss::FinishEvolution()
 		AwardedArmorBars = FMath::Clamp(PreviewArmorBars, 0, 2);
 #endif
 	ArmorHitsRemaining = AwardedArmorBars * HitsPerArmorBar;
-	SetResistance(BossResistanceForArmorBars(GetArmorBars()));
+	SetAutomaticToughness(BossToughnessForArmorBars(GetArmorBars()));
 	RequiredHits = BaseHealthHits + ArmorHitsRemaining;
 	MaxHP = static_cast<float>(RequiredHits);
 	CurrentHP = static_cast<float>(BaseHitsRemaining + ArmorHitsRemaining);
@@ -402,7 +402,7 @@ void AQuasicomboBoss::RestartEncounter()
 	SetActorTransform(BossStartTransform, false, nullptr, ETeleportType::TeleportPhysics);
 	BaseHitsRemaining = BaseHealthHits;
 	ArmorHitsRemaining = AwardedArmorBars * HitsPerArmorBar;
-	SetResistance(BossResistanceForArmorBars(GetArmorBars()));
+	SetAutomaticToughness(BossToughnessForArmorBars(GetArmorBars()));
 	bCorpseSettling = false;
 	GetMesh()->bPauseAnims = false;
 	ResetSideCombat(BaseHealthHits + ArmorHitsRemaining);
