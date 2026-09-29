@@ -14,37 +14,26 @@ class ASideScrollingCombatEnemy : public ACombatEnemy
 	GENERATED_BODY()
 public:
 	ASideScrollingCombatEnemy();
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Combat", meta=(ClampMin="1")) int32 RequiredHits = 3;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Combat") float AggroRange = 550.0f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Combat") float AttackRange = 120.0f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Combat") float PatrolHalfWidth = 450.0f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Combat") float AttackCooldown = 1.4f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Combat", meta=(ClampMin="0.01", Units="s")) float AttackWindup = 0.25f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Combat", meta=(ClampMin="0.01", Units="s")) float ChargedAttackWindup = 0.9f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Combat", meta=(ClampMin="0.0", Units="s")) float RecoveryDuration = 0.35f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Combat", meta=(ClampMin="0.0", Units="s")) float HitReactionDuration = 0.3f;
-	/** If false, species/tier or boss armor supplies Toughness automatically. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Combat")
-	bool bOverrideToughness = false;
-
-	/**
-	 * Chance to shrug off the stagger from a non-lethal hit.
-	 * 0 = always stagger, 0.8 = 80% chance to ignore stagger, 1 = never stagger.
-	 * Toughness does not reduce damage.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Combat",
-		meta=(ClampMin="0.0", ClampMax="1.0", EditCondition="bOverrideToughness"))
-	float Toughness = 0.0f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Combat", meta=(ClampMin="0.1", Units="s")) float AttackTimeout = 2.5f;
-	UPROPERTY(BlueprintReadOnly, Category="Combat") ESideCombatState CombatState = ESideCombatState::Idle;
-	UFUNCTION(BlueprintPure, Category="Combat") int32 GetAcceptedStrikes() const { return AcceptedStrikes; }
-	UFUNCTION(BlueprintPure, Category="Combat") int32 GetRemainingStrikes() const { return FMath::Max(0, RequiredHits - AcceptedStrikes); }
-	UFUNCTION(BlueprintPure, Category="Combat") bool IsCombatDefeated() const { return AcceptedStrikes >= RequiredHits; }
-	UFUNCTION(BlueprintPure, Category="Combat") float GetToughness() const { return FMath::Clamp(Toughness, 0.0f, 1.0f); }
-	UFUNCTION(BlueprintCallable, Category="Combat") void SetToughness(float NewToughness);
-	UFUNCTION(BlueprintPure, Category="Combat") bool DidLastStrikeStagger() const { return bLastStrikeTriggeredHitReaction; }
-	UFUNCTION(BlueprintPure, Category="Combat") bool IsChargedAttackActive() const { return bChargedAttackActive; }
-	UFUNCTION(BlueprintImplementableEvent, Category="Combat") void OnAcceptedStrike(int32 StrikeCount, int32 StrikesRequired);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Side Combat", meta=(ClampMin="1")) int32 RequiredHits = 3;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Side Combat") float AggroRange = 550.0f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Side Combat") float AttackRange = 120.0f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Side Combat") float PatrolHalfWidth = 450.0f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Side Combat") float AttackCooldown = 1.4f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Side Combat", meta=(ClampMin="0.01", Units="s")) float AttackWindup = 0.25f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Side Combat", meta=(ClampMin="0.01", Units="s")) float ChargedAttackWindup = 0.9f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Side Combat", meta=(ClampMin="0.0", Units="s")) float RecoveryDuration = 0.35f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Side Combat", meta=(ClampMin="0.0", Units="s")) float HitReactionDuration = 0.3f;
+	/** 0 = reacts to every hit; 1 = ignores all non-lethal hit reactions. Damage is unaffected. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Side Combat|Damage", meta=(ClampMin="0.0", ClampMax="1.0")) float Resistance = 0.0f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Side Combat", meta=(ClampMin="0.1", Units="s")) float AttackTimeout = 2.5f;
+	UPROPERTY(BlueprintReadOnly, Category="Side Combat") ESideCombatState CombatState = ESideCombatState::Idle;
+	UFUNCTION(BlueprintPure, Category="Side Combat") int32 GetAcceptedStrikes() const { return AcceptedStrikes; }
+	UFUNCTION(BlueprintPure, Category="Side Combat") int32 GetRemainingStrikes() const { return FMath::Max(0, RequiredHits - AcceptedStrikes); }
+	UFUNCTION(BlueprintPure, Category="Side Combat") bool IsCombatDefeated() const { return AcceptedStrikes >= RequiredHits; }
+	UFUNCTION(BlueprintPure, Category="Side Combat|Damage") float GetResistance() const { return FMath::Clamp(Resistance, 0.0f, 1.0f); }
+	UFUNCTION(BlueprintCallable, Category="Side Combat|Damage") void SetResistance(float NewResistance);
+	UFUNCTION(BlueprintPure, Category="Side Combat|Damage") bool WasLastStrikeResisted() const { return !bLastStrikeTriggeredHitReaction; }
+	UFUNCTION(BlueprintImplementableEvent, Category="Side Combat") void OnAcceptedStrike(int32 StrikeCount, int32 StrikesRequired);
 	virtual void ApplyDamage(float Damage, AActor* DamageCauser, const FVector& DamageLocation, const FVector& DamageImpulse) override;
 	virtual void DoAttackTrace(FName DamageSourceBone) override;
 protected:
@@ -60,13 +49,12 @@ protected:
 	/** Applies HP/effects while respecting whether the current accepted strike actually staggered this enemy. */
 	void ApplyAcceptedStrikeDamage(float Damage, AActor* DamageCauser, const FVector& DamageLocation, const FVector& DamageImpulse);
 	bool DidLastStrikeTriggerHitReaction() const { return bLastStrikeTriggeredHitReaction; }
-	void SetAutomaticToughness(float NewToughness);
 	void SuspendSideCombat();
 	void ResetSideCombat(int32 Hits);
 	void FinishSideAttack();
 	void SuppressFallbackAttackTrace() { bAttackTraceFired = true; }
 	virtual void HandleRequiredHitsReached(AActor* DamageCauser, const FVector& DamageLocation, const FVector& DamageImpulse);
-	UPROPERTY(BlueprintReadOnly, Category="Combat") int32 AcceptedStrikes = 0;
+	UPROPERTY(BlueprintReadOnly, Category="Side Combat") int32 AcceptedStrikes = 0;
 private:
 	TWeakObjectPtr<AActor> LastStrikeCauser;
 	int64 LastAcceptedStrikeSerial = -1;
@@ -76,8 +64,7 @@ private:
 	bool bSideAttackActive = false;
 	bool bStartingSideAttack = false;
 	bool bAttackTraceFired = false;
-	bool bChargedAttackActive = false;
-	float ChargedStrikeReadyAt = 0.0f;
+	float HitReactionAccumulator = 0.0f;
 	bool bLastStrikeTriggeredHitReaction = true;
 	FTimerHandle AttackTraceFallbackTimer;
 	FTimerHandle AttackTimeoutTimer;
@@ -86,5 +73,4 @@ private:
 	void FallbackAttackTrace();
 	void TimeoutSideAttack();
 	bool ShouldTriggerHitReaction();
-	float GetEffectiveHitReactionDuration() const;
 };

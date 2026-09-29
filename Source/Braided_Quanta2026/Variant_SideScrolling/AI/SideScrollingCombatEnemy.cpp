@@ -21,41 +21,44 @@ ASideScrollingCombatEnemy::ASideScrollingCombatEnemy()
 void ASideScrollingCombatEnemy::BeginPlay()
 {
 	MaxHP = static_cast<float>(FMath::Max(1, RequiredHits));
-	Toughness = FMath::Clamp(Toughness, 0.0f, 1.0f);
+	Resistance = FMath::Clamp(Resistance, 0.0f, 1.0f);
+	HitReactionAccumulator = Resistance < 1.0f ? Resistance : 0.0f;
 	Super::BeginPlay();
 	SpawnX = GetActorLocation().X;
 	GetCharacterMovement()->SetPlaneConstraintOrigin(GetActorLocation());
 	OnAttackCompleted.BindUObject(this, &ASideScrollingCombatEnemy::FinishSideAttack);
 }
 
-void ASideScrollingCombatEnemy::SetToughness(float NewToughness)
+void ASideScrollingCombatEnemy::SetResistance(float NewResistance)
 {
-	Toughness = FMath::Clamp(NewToughness, 0.0f, 1.0f);
-}
-
-void ASideScrollingCombatEnemy::SetAutomaticToughness(float NewToughness)
-{
-	if (!bOverrideToughness)
+	const float ClampedResistance = FMath::Clamp(NewResistance, 0.0f, 1.0f);
+	if (!FMath::IsNearlyEqual(Resistance, ClampedResistance))
 	{
-		SetToughness(NewToughness);
+		Resistance = ClampedResistance;
+		// Prime the cadence so the first hit after a real resistance change still
+		// gives readable feedback, unless resistance is a full 1.0.
+		HitReactionAccumulator = Resistance < 1.0f ? Resistance : 0.0f;
+	}
+	else
+	{
+		Resistance = ClampedResistance;
 	}
 }
 
 bool ASideScrollingCombatEnemy::ShouldTriggerHitReaction()
 {
-	const float ClampedToughness = GetToughness();
-	if (ClampedToughness <= KINDA_SMALL_NUMBER) return true;
-	if (ClampedToughness >= 1.0f - KINDA_SMALL_NUMBER) return false;
+	const float ClampedResistance = GetResistance();
+	if (ClampedResistance <= KINDA_SMALL_NUMBER) return true;
+	if (ClampedResistance >= 1.0f - KINDA_SMALL_NUMBER) return false;
 
-	// Toughness is a true per-hit probability: 0.8 means an 80% chance
-	// to shrug off stagger and a 20% chance to stagger.
-	return FMath::FRand() >= ClampedToughness;
-}
+	// Resistance is the fraction of otherwise valid hits that can be shrugged off.
+	// This accumulator gives deterministic results instead of random combat:
+	// 0.6 resistance reacts to roughly 40% of hits and resists roughly 60%.
+	HitReactionAccumulator += 1.0f - ClampedResistance;
+	if (HitReactionAccumulator + KINDA_SMALL_NUMBER < 1.0f) return false;
 
-float ASideScrollingCombatEnemy::GetEffectiveHitReactionDuration() const
-{
-	// Tough enemies recover from successful staggers more quickly.
-	return FMath::Max(0.08f, HitReactionDuration * (1.0f - GetToughness()));
+	HitReactionAccumulator = FMath::Max(0.0f, HitReactionAccumulator - 1.0f);
+	return true;
 }
 
 void ASideScrollingCombatEnemy::EndPlay(EEndPlayReason::Type EndPlayReason)
@@ -115,7 +118,6 @@ void ASideScrollingCombatEnemy::StartSideAttack()
 	const bool bChargedAttack = ShouldUseChargedSideAttack();
 	bSideAttackActive = true;
 	bAttackTraceFired = false;
-	bChargedAttackActive = bChargedAttack;
 	CombatState = ESideCombatState::Attack;
 	if (StartCustomSideAttack(bChargedAttack))
 	{
@@ -123,8 +125,7 @@ void ASideScrollingCombatEnemy::StartSideAttack()
 		return;
 	}
 	const bool bUseChargedMontage = bChargedAttack && ChargedAttackMontage;
-	const float StrikeDelay = bChargedAttack ? FMath::Max(AttackWindup, ChargedAttackWindup) : AttackWindup;
-	ChargedStrikeReadyAt = bChargedAttack ? GetWorld()->GetTimeSeconds() + StrikeDelay : 0.0f;
+	const float StrikeDelay = bUseChargedMontage ? FMath::Max(AttackWindup, ChargedAttackWindup) : AttackWindup;
 	GetWorldTimerManager().SetTimer(AttackTraceFallbackTimer, this, &ASideScrollingCombatEnemy::FallbackAttackTrace, FMath::Max(0.01f, StrikeDelay), false);
 	GetWorldTimerManager().SetTimer(AttackTimeoutTimer, this, &ASideScrollingCombatEnemy::TimeoutSideAttack, FMath::Max(0.1f, AttackTimeout), false);
 
@@ -176,12 +177,6 @@ void ASideScrollingCombatEnemy::FinishSideAttack()
 	if (!bSideAttackActive) return;
 	// Montage_Play can fail synchronously. Keep the windup timer in that case.
 	if (bStartingSideAttack) return;
-	if (bChargedAttackActive && !bAttackTraceFired && GetWorld()->GetTimeSeconds() < ChargedStrikeReadyAt)
-	{
-		// Preserve the fallback timer until the charged 0.3s windup is complete.
-		bIsAttacking = false;
-		return;
-	}
 	if (CombatState != ESideCombatState::Dead && CombatState != ESideCombatState::HitReaction && !bAttackTraceFired)
 	{
 		DoAttackTrace(NAME_None);
@@ -189,8 +184,6 @@ void ASideScrollingCombatEnemy::FinishSideAttack()
 	GetWorldTimerManager().ClearTimer(AttackTraceFallbackTimer);
 	GetWorldTimerManager().ClearTimer(AttackTimeoutTimer);
 	bSideAttackActive = false;
-	bChargedAttackActive = false;
-	ChargedStrikeReadyAt = 0.0f;
 	if (CombatState == ESideCombatState::Attack)
 	{
 		CombatState = ESideCombatState::Recovery;
@@ -201,7 +194,6 @@ void ASideScrollingCombatEnemy::FinishSideAttack()
 void ASideScrollingCombatEnemy::DoAttackTrace(FName DamageSourceBone)
 {
 	if (!bSideAttackActive || bAttackTraceFired || CurrentHP <= 0.0f || IsCombatDefeated()) return;
-	if (bChargedAttackActive && GetWorld()->GetTimeSeconds() < ChargedStrikeReadyAt) return;
 	bAttackTraceFired = true;
 
 	const FVector TraceStart = GetActorLocation() + FVector(0.0f, 0.0f, 25.0f);
@@ -239,9 +231,7 @@ void ASideScrollingCombatEnemy::ApplyDamage(float Damage, AActor* DamageCauser, 
 		LastStrikeCauser = DamageCauser;
 		LastAcceptedStrikeSerial = IncomingSerial;
 	}
-	// Charged attacks have hyper armor: they still take damage, but a nonlethal
-	// hit cannot stagger, launch, or cancel the charged attack.
-	bLastStrikeTriggeredHitReaction = !bChargedAttackActive && ShouldTriggerHitReaction();
+	bLastStrikeTriggeredHitReaction = ShouldTriggerHitReaction();
 	if (bLastStrikeTriggeredHitReaction)
 	{
 		bSideAttackActive = false;
@@ -254,7 +244,7 @@ void ASideScrollingCombatEnemy::ApplyDamage(float Damage, AActor* DamageCauser, 
 		}
 		bIsAttacking = false;
 		CombatState = ESideCombatState::HitReaction;
-		StateEndsAt = GetWorld()->GetTimeSeconds() + GetEffectiveHitReactionDuration();
+		StateEndsAt = GetWorld()->GetTimeSeconds() + HitReactionDuration;
 	}
 	++AcceptedStrikes;
 	ResolveAcceptedStrike(DamageCauser, DamageLocation, DamageImpulse);
@@ -273,7 +263,7 @@ void ASideScrollingCombatEnemy::ResolveAcceptedStrike(AActor* DamageCauser, cons
 		if (bLastStrikeTriggeredHitReaction)
 		{
 			CombatState = ESideCombatState::HitReaction;
-			StateEndsAt = GetWorld()->GetTimeSeconds() + GetEffectiveHitReactionDuration();
+			StateEndsAt = GetWorld()->GetTimeSeconds() + HitReactionDuration;
 		}
 		ApplyAcceptedStrikeDamage(1.0f, DamageCauser, DamageLocation, DamageImpulse);
 	}
@@ -284,18 +274,10 @@ void ASideScrollingCombatEnemy::ApplyAcceptedStrikeDamage(float Damage, AActor* 
 {
 	if (bLastStrikeTriggeredHitReaction)
 	{
-		const float ReactionScale = 1.0f - GetToughness();
-		FVector ToughnessScaledImpulse = DamageImpulse;
-		ToughnessScaledImpulse.X *= ReactionScale;
-		ToughnessScaledImpulse.Y *= ReactionScale;
-		// Vertical launch falls off faster than horizontal knockback.
-		ToughnessScaledImpulse.Z *= ReactionScale * ReactionScale;
-
-		ACombatEnemy::ApplyDamage(Damage, DamageCauser, DamageLocation, ToughnessScaledImpulse);
-		if (CurrentHP > 0.0f)
-		{
-			GetMesh()->SetPhysicsBlendWeight(0.5f * ReactionScale);
-		}
+		// When a hit gets through resistance, keep the normal reaction strength.
+		// The resistance value controls how often hits are shrugged off, so 0.6
+		// means roughly 60% resisted rather than weakening every reaction twice.
+		ACombatEnemy::ApplyDamage(Damage, DamageCauser, DamageLocation, DamageImpulse);
 		return;
 	}
 
@@ -313,8 +295,6 @@ void ASideScrollingCombatEnemy::SuspendSideCombat()
 	bSideAttackActive = false;
 	bIsAttacking = false;
 	bAttackTraceFired = true;
-	bChargedAttackActive = false;
-	ChargedStrikeReadyAt = 0.0f;
 	GetWorldTimerManager().ClearTimer(AttackTraceFallbackTimer);
 	GetWorldTimerManager().ClearTimer(AttackTimeoutTimer);
 	if (UAnimInstance* Anim = GetMesh()->GetAnimInstance()) Anim->StopAllMontages(0.1f);
@@ -327,6 +307,7 @@ void ASideScrollingCombatEnemy::ResetSideCombat(int32 Hits)
 	RequiredHits = FMath::Max(1, Hits);
 	MaxHP = CurrentHP = static_cast<float>(RequiredHits);
 	AcceptedStrikes = 0;
+	HitReactionAccumulator = GetResistance() < 1.0f ? GetResistance() : 0.0f;
 	bLastStrikeTriggeredHitReaction = true;
 	LastStrikeCauser.Reset();
 	LastAcceptedStrikeSerial = -1;

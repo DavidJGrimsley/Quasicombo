@@ -17,9 +17,8 @@ AQuasicomboEnemy::AQuasicomboEnemy()
     AggroRange = 800.0f;
     AttackRange = 150.0f;
     PatrolHalfWidth = 700.0f;
-    AttackCooldown = 0.2f;
+    AttackCooldown = 1.0f;
     AttackWindup = 0.2f;
-    ChargedAttackWindup = 0.3f;
     RecoveryDuration = 0.25f;
     // Match the old light/heavy Blueprints: melee traces hit the capsule,
     // while the mesh uses physics-body collision for hit reactions and death.
@@ -61,21 +60,15 @@ void AQuasicomboEnemy::ApplyDamage(float Damage, AActor* DamageCauser,
     }
 }
 
-bool AQuasicomboEnemy::ShouldUseChargedSideAttack() const
-{
-    return ChargedAttackChance > 0.0f &&
-        FMath::FRand() < FMath::Clamp(ChargedAttackChance, 0.0f, 1.0f);
-}
-
 void AQuasicomboEnemy::ApplyVariant()
 {
     const bool bGolem = Species == EQuasicomboEnemySpecies::StoneGolem;
     const int32 TierIndex = FMath::Clamp(static_cast<int32>(Tier), 0, 2);
     RequiredHits = 3 + TierIndex + (bGolem ? 1 : 0);
     const float BaseDamage = bGolem ? 1.5f : 1.0f;
-    static constexpr float WoodToughness[] = { 0.1f, 0.2f, 0.3f };
-    static constexpr float GolemToughness[] = { 0.4f, 0.6f, 0.8f };
-    SetAutomaticToughness(bGolem ? GolemToughness[TierIndex] : WoodToughness[TierIndex]);
+    static constexpr float WoodResistance[] = { 0.1f, 0.2f, 0.3f };
+    static constexpr float GolemResistance[] = { 0.4f, 0.6f, 0.8f };
+    SetResistance(bGolem ? GolemResistance[TierIndex] : WoodResistance[TierIndex]);
     const float TierMultiplier = 1.0f + static_cast<float>(TierIndex);
     MeleeDamage = BaseDamage * TierMultiplier;
     SetActorScale3D(FVector(1.5f * (1.0f + 0.25f * TierIndex)));
@@ -110,7 +103,7 @@ void AQuasicomboEnemy::ApplyVariant()
             TierIndex == 1 ? GolemMediumMaterial : GolemHeavyMaterial;
         if (Material) Body->SetMaterial(0, Material);
         ComboAttackMontage = GolemComboMontage;
-        ChargedAttackMontage = GolemChargedMontage;
+        ChargedAttackMontage = nullptr;
     }
     else
     {

@@ -28,7 +28,7 @@ enum class EQuasicomboEnemyTier : uint8
 };
 
 /** One placeable enemy configured by species and tier. Art is assigned on BP_QC_Enemy. */
-UCLASS(Blueprintable, meta=(PrioritizeCategories="Quasicombo Combat"))
+UCLASS(Blueprintable)
 class AQuasicomboEnemy : public ASideScrollingCombatEnemy
 {
     GENERATED_BODY()
@@ -45,10 +45,6 @@ public:
     UFUNCTION(BlueprintPure, Category="Quasicombo|Variant")
     float GetConfiguredMeleeDamage() const { return MeleeDamage; }
 
-    /** Chance that a normal Quasicombo enemy chooses a charged, hyper-armored attack. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Combat", meta=(ClampMin="0.0", ClampMax="1.0"))
-    float ChargedAttackChance = 0.25f;
-
     UAnimSequence* GetGolemIdleAnimation() const { return GolemIdleAnimation; }
     UAnimSequence* GetGolemWalkAnimation() const { return GolemWalkAnimation; }
 
@@ -58,7 +54,6 @@ public:
 protected:
     virtual void OnConstruction(const FTransform& Transform) override;
     virtual void BeginPlay() override;
-    virtual bool ShouldUseChargedSideAttack() const override;
 
     UPROPERTY(EditDefaultsOnly, Category="Quasicombo|Assets|Wood Monster")
     TObjectPtr<USkeletalMesh> WoodMesh;
@@ -95,10 +90,6 @@ protected:
 
     UPROPERTY(EditDefaultsOnly, Category="Quasicombo|Assets|Stone Golem")
     TObjectPtr<UAnimMontage> GolemComboMontage;
-
-    /** Optional dedicated charged montage. If unset, charged attacks reuse the combo animation with charged timing. */
-    UPROPERTY(EditDefaultsOnly, Category="Quasicombo|Assets|Stone Golem")
-    TObjectPtr<UAnimMontage> GolemChargedMontage;
 
     UPROPERTY(EditDefaultsOnly, Category="Quasicombo|Assets|Stone Golem")
     TObjectPtr<UMaterialInterface> GolemLightMaterial;
