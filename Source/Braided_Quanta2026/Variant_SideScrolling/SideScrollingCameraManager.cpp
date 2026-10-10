@@ -104,6 +104,6 @@ void ASideScrollingCameraManager::UpdateViewTarget(FTViewTarget& OutVT, float De
 		// blend towards the new camera location and update the output
 		FVector TargetCameraLocation(CurrentX, CurrentY, CurrentZ);
 
-		OutVT.POV.Location = FMath::VInterpTo(CurrentCameraLocation, TargetCameraLocation, DeltaTime, 2.0f);
+		OutVT.POV.Location = FMath::VInterpTo(CurrentCameraLocation, TargetCameraLocation, DeltaTime, 3.0f);
 	}
 }

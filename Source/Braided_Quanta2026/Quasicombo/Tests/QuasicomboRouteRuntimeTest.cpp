@@ -16,6 +16,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
+#include "Quasicombo/Boss/QuasicomboMusicComponent.h"
 #include "Misc/AutomationTest.h"
 #include "Tests/AutomationCommon.h"
 
@@ -152,6 +153,102 @@ bool FQuasicomboRouteRuntimeTest::RunTest(const FString& Parameters)
 
 	Fixture.ForwardErrorMessages(this);
 	return !Fixture.HasFailed();
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FQuasicomboEmptyEncounterTest,
+	"Quasicombo.Route.EmptyEncounter",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter
+)
+
+bool FQuasicomboEmptyEncounterTest::RunTest(const FString& Parameters)
+{
+	FTestWorldWrapper Fixture;
+	if (!Fixture.CreateTestWorld(EWorldType::Game))
+	{
+		Fixture.ForwardErrorMessages(this);
+		return false;
+	}
+	UWorld* World = Fixture.GetTestWorld();
+	AQuasicomboRouteSection* Section = Spawn<AQuasicomboRouteSection>(World, 0.0f);
+	Section->SectionNumber = 1;
+	AQuasicomboRouteLeg* Leg = Spawn<AQuasicomboRouteLeg>(World, 1000.0f);
+	Leg->Lane = EQuasicomboLane::A;
+	Leg->Section = Section;
+	Leg->ForwardBarrier = Spawn<AQuasicomboBarrier>(World, 1350.0f);
+	Section->Legs.Add(Leg);
+	if (!Fixture.BeginPlayInTestWorld())
+	{
+		Fixture.ForwardErrorMessages(this);
+		return false;
+	}
+	ACharacter* Player = Spawn<ACharacter>(World, 1000.0f);
+	Player->Tags.AddUnique(TEXT("Player"));
+	APlayerController* Controller = Spawn<APlayerController>(World, 0.0f);
+	Controller->Possess(Player);
+	TestTrue(TEXT("Empty encounter starts behind a closed exit"), Leg->ForwardBarrier->IsClosed());
+	EnterTrigger(Leg, Player);
+	TestTrue(TEXT("Empty encounter clears on selection"), Leg->IsCleared());
+	TestFalse(TEXT("Empty encounter opens its exit immediately"), Leg->ForwardBarrier->IsClosed());
+	Fixture.ForwardErrorMessages(this);
+	return !Fixture.HasFailed();
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FQuasicomboThreeSectionOverlapTest,
+	"Quasicombo.Route.ThreeSectionsPhysicalOverlaps",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter
+)
+
+bool FQuasicomboThreeSectionOverlapTest::RunTest(const FString& Parameters)
+{
+	// Exercise every final lane through real capsule/box overlaps, without broadcasting delegates.
+	for (int32 FinalLane = 0; FinalLane < 3; ++FinalLane)
+	{
+		FTestWorldWrapper Fixture;
+		if (!Fixture.CreateTestWorld(EWorldType::Game)) return false;
+		UWorld* World = Fixture.GetTestWorld();
+		AQuasicomboRouteLeg* Legs[3][3] = {};
+		ASideScrollingCombatEnemy* Enemies[3][3] = {};
+		for (int32 SectionIndex = 0; SectionIndex < 3; ++SectionIndex)
+		{
+			auto* Section = Spawn<AQuasicomboRouteSection>(World, -2000.0f);
+			Section->SectionNumber = SectionIndex + 1;
+			for (int32 LaneIndex = 0; LaneIndex < 3; ++LaneIndex)
+			{
+				const FVector Position(1000.0f * (SectionIndex + 1), 0, 1000.0f * LaneIndex + 200);
+				auto* Leg = World->SpawnActor<AQuasicomboRouteLeg>(Position, FRotator::ZeroRotator);
+				Leg->Section = Section; Leg->Lane = static_cast<EQuasicomboLane>(LaneIndex);
+				Section->Legs.Add(Leg); Legs[SectionIndex][LaneIndex] = Leg;
+				auto* Enemy = World->SpawnActor<ASideScrollingCombatEnemy>(Position + FVector(400, 0, 0), FRotator::ZeroRotator);
+				Leg->Enemies.Add(Enemy); Enemies[SectionIndex][LaneIndex] = Enemy;
+			}
+		}
+		if (!Fixture.BeginPlayInTestWorld()) return false;
+		auto* MusicOwner = Spawn<AActor>(World, -2000.0f);
+		auto* Music = NewObject<UQuasicomboMusicComponent>(MusicOwner);
+		MusicOwner->AddInstanceComponent(Music); Music->RegisterComponent(); Music->StartLevelMusic();
+		auto* Player = Spawn<ACharacter>(World, -1000.0f);
+		Player->Tags.AddUnique(TEXT("Player")); Player->GetCharacterMovement()->DisableMovement();
+		auto* Controller = Spawn<APlayerController>(World, -1000.0f); Controller->Possess(Player);
+		auto* Run = World->GetSubsystem<UQuasicomboRunSubsystem>();
+		for (int32 SectionIndex = 0; SectionIndex < 3; ++SectionIndex)
+		{
+			const int32 LaneIndex = (FinalLane + SectionIndex + 1) % 3;
+			auto* Leg = Legs[SectionIndex][LaneIndex];
+			Player->SetActorLocation(Leg->GetActorLocation(), false, nullptr, ETeleportType::TeleportPhysics);
+			Player->GetCapsuleComponent()->UpdateOverlaps(); Fixture.TickTestWorld(0.01f);
+			TestEqual(TEXT("Each physical entry advances the expected section"), Run->GetCurrentSection(), SectionIndex + 1);
+			for (int32 OtherLane = 0; OtherLane < 3; ++OtherLane)
+				TestEqual(TEXT("Only the committed lane activates enemies"), Enemies[SectionIndex][OtherLane]->GetActorEnableCollision(), OtherLane == LaneIndex);
+			USoundBase* Expected = (LaneIndex == 0 ? Music->RouteAMusic : LaneIndex == 2 ? Music->RouteCMusic : Music->DefaultMusic).LoadSynchronous();
+			TestNotNull(TEXT("Route music asset exists"), Expected);
+			TestEqual(TEXT("Accepted entry changes music"), Music->CurrentMusic.Get(), Expected);
+		}
+		Fixture.ForwardErrorMessages(this);
+		if (Fixture.HasFailed()) return false;
+	}
+	return true;
 }
 
 #endif

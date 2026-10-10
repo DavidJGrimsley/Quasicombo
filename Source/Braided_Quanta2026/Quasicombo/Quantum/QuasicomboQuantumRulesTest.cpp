@@ -2,6 +2,11 @@
 
 #include "QuasicomboQuantumRules.h"
 #include "QuasicomboBraidFixtures.h"
+#include "QuantumBossComponent.h"
+#include "QuasicomboRunSubsystem.h"
+#include "Tests/AutomationCommon.h"
+#include "Engine/World.h"
+#include "GameFramework/Actor.h"
 #include "Misc/AutomationTest.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FQuasicomboQuantumRulesTest,
@@ -51,6 +56,69 @@ bool FQuasicomboQuantumRulesTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Truncated complex response triggers fallback"), TryValidateState(TruncatedState, nullptr, Validated));
 	State[1].Real = 2.0;
 	TestFalse(TEXT("Nonunit complex response triggers fallback"), TryValidateState(State, nullptr, Validated));
+	return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FQuasicomboQuantumEndedRunFixtureTest,
+	"Quasicombo.Quantum.EndedRunDoesNotApplyFixture",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FQuasicomboQuantumEndedRunFixtureTest::RunTest(const FString& Parameters)
+{
+	FTestWorldWrapper Fixture;
+	if (!Fixture.CreateTestWorld(EWorldType::Game) || !Fixture.BeginPlayInTestWorld())
+	{
+		Fixture.ForwardErrorMessages(this);
+		return false;
+	}
+	UWorld* World = Fixture.GetTestWorld();
+	UQuasicomboRunSubsystem* Run = World->GetSubsystem<UQuasicomboRunSubsystem>();
+	AActor* Owner = World->SpawnActor<AActor>();
+	if (!TestNotNull(TEXT("Run subsystem"), Run) || !TestNotNull(TEXT("Component owner"), Owner)) return false;
+	UQuantumBossComponent* Quantum = NewObject<UQuantumBossComponent>(Owner);
+	Owner->AddInstanceComponent(Quantum);
+	Quantum->RegisterComponent();
+	Quantum->bUseLiveQuantumApi = false;
+	if (!Run->HasRunStarted()) Run->StartRun();
+	Run->EndRun(EQuasicomboRunOutcome::Defeat);
+	TestEqual(TEXT("Run ended before the boss encounter"), Run->GetOutcome(), EQuasicomboRunOutcome::Defeat);
+	Quantum->FreezeForFinisher();
+	Quantum->EnsureState();
+	Quantum->ResumeAfterRetry();
+	TestFalse(TEXT("An ended run cannot initialize a fallback state"), Quantum->HasQuantumState());
+	TestFalse(TEXT("An ended run does not report a fallback update"), Quantum->UsedFallback());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FQuasicomboQuantumActiveRunFixtureTest,
+	"Quasicombo.Quantum.ActiveRunFixtureSurvivesFreezeAndRetry",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FQuasicomboQuantumActiveRunFixtureTest::RunTest(const FString& Parameters)
+{
+	FTestWorldWrapper Fixture;
+	if (!Fixture.CreateTestWorld(EWorldType::Game) || !Fixture.BeginPlayInTestWorld())
+	{
+		Fixture.ForwardErrorMessages(this);
+		return false;
+	}
+	UWorld* World = Fixture.GetTestWorld();
+	UQuasicomboRunSubsystem* Run = World->GetSubsystem<UQuasicomboRunSubsystem>();
+	AActor* Owner = World->SpawnActor<AActor>();
+	if (!TestNotNull(TEXT("Run subsystem"), Run) || !TestNotNull(TEXT("Component owner"), Owner)) return false;
+	UQuantumBossComponent* Quantum = NewObject<UQuantumBossComponent>(Owner);
+	Owner->AddInstanceComponent(Quantum);
+	Quantum->RegisterComponent();
+	Quantum->bUseLiveQuantumApi = false;
+	if (!Run->HasRunStarted()) Run->StartRun();
+	Quantum->EnsureState();
+	TestTrue(TEXT("An active run initializes its validated fixture"), Quantum->HasQuantumState());
+	TestTrue(TEXT("The local fixture reports fallback use"), Quantum->UsedFallback());
+	const double Tau = Quantum->GetTauProbability();
+	Quantum->FreezeForFinisher();
+	Quantum->EnsureState();
+	Quantum->ResumeAfterRetry();
+	TestTrue(TEXT("Retry retains an initialized quantum state"), Quantum->HasQuantumState());
+	TestEqual(TEXT("Freeze and retry preserve the captured probability"), Quantum->GetTauProbability(), Tau);
 	return true;
 }
 

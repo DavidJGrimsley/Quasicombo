@@ -1,0 +1,11 @@
+In the farthest corners of the pacific, there resides a remote jungle island. A place overrun with trees and foliage, uninhabitable to humans and civilized creatures. This island is used as the designated dumping ground for abandoned experiments and failed prototypes.
+ Some of these experiments seem to include anti-gravity technologies, which affected the surrounding terrain in strange ways. This place has become more hostile over the years as the projects and technologies become rogue. 
+The enemies and final boss are discarded robots that adapted to the environment and became unruly.
+
+One of the many unfortunate machines who ended up on this island is NYSQ, a robot from a line of navigation robots made to guide civilians in unmapped areas where compasses and classical GPS systems fail. 
+These robots are equipped with strong and resilient hardware, able to clear terrain and remove obstacles to clear the path for civilians. The small size of these robots allows them to fit through small gaps to guarantee the safety of the road ahead. They are also equipped to simulate human empathy to be able to guide lost and scared civilians and children.
+
+While in development, NYSQ was caught in an accident that caused its navigation abilities to stop functioning. However, this malfunction also increased NYSQ’s adaptability and survivability in unfamiliar terrain.
+NYSQ’s goal is to find the way out to find the factory it came from so the malfunction can be repaired, thinking that civilization is just beyond the jungle. NYSQ wants to gather data on the feeling that the civilians experience of returning home after being lost and unsure of whether they are getting home or not by experiencing this feeling itself, to improve its performance when it begins its duties. 
+
+How will you traverse this chaos to escape?

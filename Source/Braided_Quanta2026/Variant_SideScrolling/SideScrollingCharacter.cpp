@@ -1,6 +1,10 @@
+#include "SideScrollingCharacter.h"
+#include "QuasicomboPlayerMovement.h"
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "SideScrollingCharacter.h"
+#include "QuasicomboQTEDirector.h"
+#include "BusterCannonComponent.h"
+#include "InputCoreTypes.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/WidgetComponent.h"
@@ -17,6 +21,10 @@
 #include "Kismet/KismetMathLibrary.h"
 #include "TimerManager.h"
 #include "Animation/AnimMontage.h"
+#include "Animation/AnimSequence.h"
+#include "Animation/AnimationAsset.h"
+#include "Engine/SkeletalMesh.h"
+#include "PhysicsEngine/PhysicsAsset.h"
 #include "Blueprint/UserWidget.h"
 #include "UObject/ConstructorHelpers.h"
 #include "QuasicomboBoss.h"
@@ -24,11 +32,25 @@
 #include "CombatEnemy.h"
 #include "SideScrollingCombatEnemy.h"
 #include "Kismet/GameplayStatics.h"
+#include "NiagaraComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
+#include "Sound/SoundBase.h"
 
 namespace
 {
 bool SubmitFinisherInput(AActor* WorldContext, EQuasicomboQTEInput Input)
 {
+    if (const auto* Player = Cast<ASideScrollingCharacter>(WorldContext); Player && Player->IsInFatalTrap()) return true;
+	if (WorldContext && WorldContext->GetWorld())
+	{
+		if (const UQuasicomboRunSubsystem* Run = WorldContext->GetWorld()->GetSubsystem<UQuasicomboRunSubsystem>())
+		{
+			if (!Run->HasRunStarted()) return true;
+			if(auto* Director=Run->GetQTEDirector()) return Director->Submit(Input);
+            if (Run->GetOutcome() != EQuasicomboRunOutcome::Playing || Run->IsBossCombatLocked()) return true;
+		}
+	}
 	if (AQuasicomboBoss* Boss = Cast<AQuasicomboBoss>(UGameplayStatics::GetActorOfClass(WorldContext, AQuasicomboBoss::StaticClass())))
 	{
 		return Boss->SubmitQTEInput(Input);
@@ -37,9 +59,11 @@ bool SubmitFinisherInput(AActor* WorldContext, EQuasicomboQTEInput Input)
 }
 }
 
-ASideScrollingCharacter::ASideScrollingCharacter()
+ASideScrollingCharacter::ASideScrollingCharacter(const FObjectInitializer& ObjectInitializer)
+    : Super(ObjectInitializer.SetDefaultSubobjectClass<UQuasicomboPlayerMovement>(ACharacter::CharacterMovementComponentName))
 {
 	PrimaryActorTick.bCanEverTick = true;
+    BusterCannon = CreateDefaultSubobject<UBusterCannonComponent>(TEXT("BusterCannon"));
 
 	// Bind montage delegates used by the imported platforming/combat behavior.
 	OnDashMontageEnded.BindUObject(this, &ASideScrollingCharacter::DashMontageEnded);
@@ -54,6 +78,26 @@ ASideScrollingCharacter::ASideScrollingCharacter()
 	static ConstructorHelpers::FObjectFinder<UAnimMontage> DashMontageFinder(TEXT("/Game/Variant_Platforming/Anims/AM_Dash.AM_Dash"));
 	static ConstructorHelpers::FObjectFinder<UAnimMontage> ComboMontageFinder(TEXT("/Game/Variant_Combat/Anims/AM_ComboAttack.AM_ComboAttack"));
 	static ConstructorHelpers::FObjectFinder<UAnimMontage> ChargedMontageFinder(TEXT("/Game/Variant_Combat/Anims/AM_ChargedAttack.AM_ChargedAttack"));
+
+	// Radical Mike is now present in this private branch. Keep the normal
+	// SideScroller gameplay class and use the marketplace asset only as the
+	// visual/animation layer.
+	static ConstructorHelpers::FObjectFinder<USkeletalMesh> MikeMeshFinder(TEXT("/Game/RadicalMike/Mesh/SKM_MegaMikeZ.SKM_MegaMikeZ"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequence> MikeIdleFinder(TEXT("/Game/RadicalMike/Animations/Anim_ZMIKE_Idle.Anim_ZMIKE_Idle"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequence> MikeWalkFinder(TEXT("/Game/RadicalMike/Animations/Anim_ZMIKE_Walk.Anim_ZMIKE_Walk"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequence> MikeRunFinder(TEXT("/Game/RadicalMike/Animations/Anim_ZMIKE_Run.Anim_ZMIKE_Run"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequence> MikeJumpFinder(TEXT("/Game/RadicalMike/Animations/Anim_ZMIKE_Jump.Anim_ZMIKE_Jump"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequence> MikeDashFinder(TEXT("/Game/RadicalMike/Animations/Anim_ZMIKE_Run_Faster.Anim_ZMIKE_Run_Faster"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequence> MikePunchRFinder(TEXT("/Game/RadicalMike/Animations/Anim_ZMIKE_PunchR.Anim_ZMIKE_PunchR"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequence> MikePunchLFinder(TEXT("/Game/RadicalMike/Animations/Anim_ZMIKE_PunchL.Anim_ZMIKE_PunchL"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequence> MikeUppercutRFinder(TEXT("/Game/RadicalMike/Animations/Anim_ZMIKE_UppercutR.Anim_ZMIKE_UppercutR"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequence> MikeUppercutLFinder(TEXT("/Game/RadicalMike/Animations/Anim_ZMIKE_UppercutL.Anim_ZMIKE_UppercutL"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequence> MikeChargeFinder(TEXT("/Game/RadicalMike/Animations/Anim_ZMIKE_IdleAggro.Anim_ZMIKE_IdleAggro"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequence> MikeHitFinder(TEXT("/Game/RadicalMike/Animations/Anim_ZMIKE_HitRegisterFront.Anim_ZMIKE_HitRegisterFront"));
+	static ConstructorHelpers::FObjectFinder<UNiagaraSystem> MikeTrailFinder(TEXT("/Game/Variant_Platforming/VFX/NS_Jump_Trail.NS_Jump_Trail"));
+	static ConstructorHelpers::FObjectFinder<USoundBase> PunchRightSoundFinder(TEXT("/Game/Quasicombo/Mike/Sounds/SFX_Mike_Punch1.SFX_Mike_Punch1"));
+	static ConstructorHelpers::FObjectFinder<USoundBase> PunchLeftSoundFinder(TEXT("/Game/Quasicombo/Mike/Sounds/SFX_Mike_Punch2.SFX_Mike_Punch2"));
+	static ConstructorHelpers::FObjectFinder<USoundBase> UppercutSoundFinder(TEXT("/Game/Quasicombo/Mike/Sounds/SFX_Mike_Punch3.SFX_Mike_Punch3"));
 
 	if (DashActionFinder.Succeeded())
 	{
@@ -85,6 +129,28 @@ ASideScrollingCharacter::ASideScrollingCharacter()
 		ChargedAttackMontage = ChargedMontageFinder.Object;
 	}
 
+	if (MikeMeshFinder.Succeeded())
+	{
+		CharacterVisualMeshOverride = MikeMeshFinder.Object;
+	}
+	if (MikeIdleFinder.Succeeded()) NativeIdleAnimation = MikeIdleFinder.Object;
+	if (MikeWalkFinder.Succeeded()) NativeWalkAnimation = MikeWalkFinder.Object;
+	if (MikeRunFinder.Succeeded()) NativeRunAnimation = MikeRunFinder.Object;
+	if (MikeJumpFinder.Succeeded()) NativeJumpAnimation = MikeJumpFinder.Object;
+	if (MikeDashFinder.Succeeded()) NativeDashAnimation = MikeDashFinder.Object;
+	if (MikePunchRFinder.Succeeded()) NativeComboAnimations.Add(MikePunchRFinder.Object);
+	if (MikeUppercutLFinder.Succeeded()) NativeComboAnimations.Add(MikeUppercutLFinder.Object);
+	if (MikePunchRFinder.Succeeded()) NativeComboAnimations.Add(MikePunchRFinder.Object);
+	if (MikePunchLFinder.Succeeded()) NativeComboAnimations.Add(MikePunchLFinder.Object);
+	if (MikeUppercutRFinder.Succeeded()) NativeComboAnimations.Add(MikeUppercutRFinder.Object);
+	if (MikeChargeFinder.Succeeded()) NativeChargedHoldAnimation = MikeChargeFinder.Object;
+	if (MikeUppercutRFinder.Succeeded()) NativeChargedReleaseAnimation = MikeUppercutRFinder.Object;
+	if (MikeHitFinder.Succeeded()) NativeHitReactionAnimation = MikeHitFinder.Object;
+	if (MikeTrailFinder.Succeeded()) MikeJumpTrailSystem = MikeTrailFinder.Object;
+	if (PunchRightSoundFinder.Succeeded()) MikePunchRightImpactSound = PunchRightSoundFinder.Object;
+	if (PunchLeftSoundFinder.Succeeded()) MikePunchLeftImpactSound = PunchLeftSoundFinder.Object;
+	if (UppercutSoundFinder.Succeeded()) MikeUppercutImpactSound = UppercutSoundFinder.Object;
+
 	// create the camera component
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
 	Camera->SetupAttachment(RootComponent);
@@ -95,7 +161,8 @@ ASideScrollingCharacter::ASideScrollingCharacter()
 	LifeBar->SetupAttachment(RootComponent);
 	LifeBar->SetRelativeLocation(FVector(0.0f, 0.0f, 120.0f));
 	LifeBar->SetWidgetSpace(EWidgetSpace::Screen);
-	LifeBar->SetDrawAtDesiredSize(true);
+	LifeBar->SetDrawAtDesiredSize(false);
+	LifeBar->SetDrawSize(FVector2D(120.0f, 30.0f));
 
 	static ConstructorHelpers::FClassFinder<UUserWidget> LifeBarClassFinder(TEXT("/Game/Variant_Combat/UI/UI_LifeBar"));
 	if (LifeBarClassFinder.Succeeded())
@@ -137,30 +204,185 @@ ASideScrollingCharacter::ASideScrollingCharacter()
 	// enable double jump and coyote time
 	JumpMaxCount = 3;
 
+	AttackTraceFallbackSockets = {
+		TEXT("Attack_R"), TEXT("Attack_L"),
+		TEXT("BusterR"), TEXT("BusterL"),
+		TEXT("hand_r"), TEXT("hand_l"),
+		TEXT("RightHand"), TEXT("LeftHand")
+	};
+	PhysicsAnchorBoneCandidates = {
+		TEXT("pelvis"), TEXT("Pelvis"),
+		TEXT("hips"), TEXT("Hips"),
+		TEXT("hip"), TEXT("Hip"),
+		TEXT("root"), TEXT("Root")
+	};
+
 	// Combat template actors identify the player by this tag.
 	Tags.AddUnique(FName(TEXT("Player")));
+}
+
+void ASideScrollingCharacter::ApplyCharacterVisualOverride()
+{
+	if (CharacterVisualMeshOverride)
+	{
+		GetMesh()->SetSkeletalMesh(CharacterVisualMeshOverride, true);
+	}
+
+	bNativeCharacterAnimationActive = bUseNativeCharacterAnimation && CharacterVisualMeshOverride && !CharacterVisualAnimClassOverride;
+	bMikeAnimationActive = CharacterVisualMeshOverride && CharacterVisualAnimClassOverride;
+
+	if (CharacterVisualAnimClassOverride)
+	{
+		GetMesh()->SetAnimationMode(EAnimationMode::AnimationBlueprint);
+		GetMesh()->SetAnimInstanceClass(CharacterVisualAnimClassOverride);
+	}
+	else if (bNativeCharacterAnimationActive)
+	{
+		GetMesh()->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+		PlayNativeCharacterAnimation(NativeIdleAnimation, true);
+	}
+
+	if (bOverrideCharacterMeshTransform)
+	{
+		GetMesh()->SetRelativeLocation(CharacterMeshRelativeLocation);
+		GetMesh()->SetRelativeRotation(CharacterMeshRelativeRotation);
+		GetMesh()->SetRelativeScale3D(CharacterMeshRelativeScale);
+	}
+}
+
+void ASideScrollingCharacter::PlayNativeCharacterAnimation(UAnimationAsset* Animation, bool bLooping, float LockSeconds)
+{
+	if (!bNativeCharacterAnimationActive || !Animation)
+	{
+		return;
+	}
+
+	if (CurrentNativeAnimation != Animation || bCurrentNativeAnimationLooping != bLooping)
+	{
+		GetMesh()->PlayAnimation(Animation, bLooping);
+		CurrentNativeAnimation = Animation;
+		bCurrentNativeAnimationLooping = bLooping;
+	}
+
+	if (LockSeconds > 0.0f && GetWorld())
+	{
+		NativeAnimationLockUntil = FMath::Max(NativeAnimationLockUntil, GetWorld()->GetTimeSeconds() + LockSeconds);
+	}
+}
+
+void ASideScrollingCharacter::UpdateNativeCharacterAnimation()
+{
+	if (!bNativeCharacterAnimationActive || !GetWorld() || CurrentHP <= 0.0f || bIsAttacking || bIsDashing)
+	{
+		return;
+	}
+
+	if (GetWorld()->GetTimeSeconds() < NativeAnimationLockUntil)
+	{
+		return;
+	}
+    if (IsWallSliding() && NativeWallSlideAnimation)
+    {
+        PlayNativeCharacterAnimation(NativeWallSlideAnimation, true);
+        return;
+    }
+
+	const UCharacterMovementComponent* Movement = GetCharacterMovement();
+	if (Movement->IsFalling())
+	{
+		PlayNativeCharacterAnimation(NativeJumpAnimation, true);
+		return;
+	}
+
+	const float HorizontalSpeed = FMath::Abs(Movement->Velocity.X);
+	if (HorizontalSpeed >= NativeRunSpeedThreshold)
+	{
+		PlayNativeCharacterAnimation(NativeRunAnimation, true);
+	}
+	else if (HorizontalSpeed > 5.0f)
+	{
+		PlayNativeCharacterAnimation(NativeWalkAnimation, true);
+	}
+	else
+	{
+		PlayNativeCharacterAnimation(NativeIdleAnimation, true);
+	}
+}
+
+void ASideScrollingCharacter::DumpCharacterRigInfo() const
+{
+	USkeletalMeshComponent* MeshComponent = GetMesh();
+	if (!MeshComponent)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("MikeRig: character has no skeletal mesh component."));
+		return;
+	}
+
+	const USkeletalMesh* MeshAsset = MeshComponent->GetSkeletalMeshAsset();
+	UE_LOG(LogTemp, Display, TEXT("MikeRig: Mesh=%s PhysicsAsset=%s Bones=%d"),
+		MeshAsset ? *MeshAsset->GetPathName() : TEXT("None"),
+		MeshComponent->GetPhysicsAsset() ? *MeshComponent->GetPhysicsAsset()->GetPathName() : TEXT("None"),
+		MeshComponent->GetNumBones());
+
+	for (int32 BoneIndex = 0; BoneIndex < MeshComponent->GetNumBones(); ++BoneIndex)
+	{
+		UE_LOG(LogTemp, Display, TEXT("MikeRig: Bone[%d]=%s"), BoneIndex, *MeshComponent->GetBoneName(BoneIndex).ToString());
+	}
+
+	for (const FName SocketName : MeshComponent->GetAllSocketNames())
+	{
+		UE_LOG(LogTemp, Display, TEXT("MikeRig: SocketOrBone=%s"), *SocketName.ToString());
+	}
 }
 
 void ASideScrollingCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Increase the effective health of this player by 20% even when its
+	ApplyCharacterVisualOverride();
+	if (MikeJumpTrailSystem && GetMesh()->GetBoneIndex(TEXT("foot_l")) != INDEX_NONE &&
+		GetMesh()->GetBoneIndex(TEXT("foot_r")) != INDEX_NONE)
+	{
+		TArray<UNiagaraComponent*> ExistingTrails;
+		GetComponents(ExistingTrails);
+		for (UNiagaraComponent* Trail : ExistingTrails)
+		{
+			if (Trail->GetFName() == TEXT("Trail_L") && Trail->GetAsset() == MikeJumpTrailSystem) MikeLeftJumpTrail = Trail;
+			if (Trail->GetFName() == TEXT("Trail_R") && Trail->GetAsset() == MikeJumpTrailSystem) MikeRightJumpTrail = Trail;
+		}
+		if (!MikeLeftJumpTrail)
+			MikeLeftJumpTrail = UNiagaraFunctionLibrary::SpawnSystemAttached(MikeJumpTrailSystem, GetMesh(),
+				TEXT("foot_l"), FVector::ZeroVector, FRotator::ZeroRotator, EAttachLocation::SnapToTarget,
+				false, false, ENCPoolMethod::None, false);
+		if (!MikeRightJumpTrail)
+			MikeRightJumpTrail = UNiagaraFunctionLibrary::SpawnSystemAttached(MikeJumpTrailSystem, GetMesh(),
+				TEXT("foot_r"), FVector::ZeroVector, FRotator::ZeroRotator, EAttachLocation::SnapToTarget,
+				false, false, ENCPoolMethod::None, false);
+		for (UNiagaraComponent* Trail : {MikeLeftJumpTrail.Get(), MikeRightJumpTrail.Get()})
+		{
+			if (Trail)
+			{
+				Trail->SetAutoActivate(false);
+				Trail->Deactivate();
+				Trail->SetVariableLinearColor(TEXT("User.Color"), MikeJumpTrailColor);
+			}
+		}
+	}
+
+	// Ensure the effective health of this player is 10 HP even when its
 	// Blueprint supplies a different starting MaxHP value.
-	MaxHP = FMath::Max(0.0f, MaxHP * 1.2f);
+	MaxHP = FMath::Max(10.0f, MaxHP);
 
 	// Initialize the combat life bar if its Blueprint class loaded successfully.
 	if (LifeBar)
 	{
+		// Keep the player bar the same on-screen size as BP_QC_Enemy's bar.
+		// Reapply this at runtime so older Blueprint component defaults cannot
+		// switch the player back to the widget's smaller desired size.
+		LifeBar->SetDrawAtDesiredSize(false);
+		LifeBar->SetDrawSize(FVector2D(120.0f, 30.0f));
 		LifeBar->InitWidget();
 		LifeBarWidget = Cast<UCombatLifeBar>(LifeBar->GetUserWidgetObject());
-		if (LifeBarWidget)
-		{
-			// Screen-space widget components size from their widget layout, not
-			// their component transform. Preserve the authored render scale.
-			const FVector2D AuthoredScale = LifeBarWidget->GetRenderTransform().Scale;
-			LifeBarWidget->SetRenderScale(AuthoredScale * 1.3f);
-		}
 	}
 
 	// The Combat Blueprint normally supplies montage section names. Since the
@@ -223,21 +445,34 @@ void ASideScrollingCharacter::BeginPlay()
 	}
 
 	ResetHP();
+    BusterCannon->InitializePlayer();
+	if (auto* Run = UQuasicomboRunSubsystem::GetRun(this))
+	{
+		Run->OnRunStarted.AddUniqueDynamic(this, &ASideScrollingCharacter::HandleRunStarted);
+		if (LifeBar) LifeBar->SetHiddenInGame(!Run->HasRunStarted());
+	}
+}
+
+void ASideScrollingCharacter::HandleRunStarted()
+{
+	if (LifeBar) LifeBar->SetHiddenInGame(false);
 }
 
 void ASideScrollingCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
-	if (!bHasTakenDamage || CurrentHP <= 0.0f || CurrentHP >= MaxHP || DeltaSeconds <= 0.0f)
+	UpdateNativeCharacterAnimation();
+
+	if (bQTEComboHeld || IsInFatalTrap() || !bHasTakenDamage || CurrentHP <= 0.0f || CurrentHP >= MaxHP || DeltaSeconds <= 0.0f)
 	{
 		return;
 	}
 
 	// Count only the part of this frame after the three-second grace period.
 	// A large frame crossing the boundary must not heal for time before it.
-	const float TimeSinceDamage = GetWorld()->GetTimeSeconds() - LastDamageTakenTime;
-	const float RegenerationTime = FMath::Clamp(TimeSinceDamage - HealthRegenDelay, 0.0f, DeltaSeconds);
+	const float TimeSinceCombat = GetWorld()->GetTimeSeconds() - LastCombatActivityTime;
+	const float RegenerationTime = FMath::Clamp(TimeSinceCombat - HealthRegenDelay, 0.0f, DeltaSeconds);
 	if (RegenerationTime > 0.0f)
 	{
 		ApplyHealing(MaxHP * HealthRegenFractionPerSecond * RegenerationTime, this);
@@ -247,12 +482,17 @@ void ASideScrollingCharacter::Tick(float DeltaSeconds)
 void ASideScrollingCharacter::EndPlay(EEndPlayReason::Type EndPlayReason)
 {
 	Super::EndPlay(EndPlayReason);
+	if (auto* Run = UQuasicomboRunSubsystem::GetRun(this)) Run->OnRunStarted.RemoveDynamic(this, &ASideScrollingCharacter::HandleRunStarted);
 
 	// clear timers owned by imported platforming/combat behavior
 	GetWorld()->GetTimerManager().ClearTimer(WallJumpTimer);
 	GetWorld()->GetTimerManager().ClearTimer(RespawnTimer);
 	GetWorld()->GetTimerManager().ClearTimer(HitComboResetTimer);
 	GetWorld()->GetTimerManager().ClearTimer(ChargedDashStrikeTimer);
+	GetWorld()->GetTimerManager().ClearTimer(DashFallbackTimer);
+	GetWorld()->GetTimerManager().ClearTimer(FallbackAttackStrikeTimer);
+	GetWorld()->GetTimerManager().ClearTimer(FallbackAttackRecoveryTimer);
+	GetWorld()->GetTimerManager().ClearTimer(DeathRagdollTimer);
 }
 
 void ASideScrollingCharacter::SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent)
@@ -264,6 +504,7 @@ void ASideScrollingCharacter::SetupPlayerInputComponent(class UInputComponent* P
 		// Existing SideScroller actions.
 		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &ASideScrollingCharacter::DoJumpStart);
 		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &ASideScrollingCharacter::DoJumpEnd);
+        EnhancedInputComponent->BindAction(InteractAction, ETriggerEvent::Started, this, &ASideScrollingCharacter::DoInteractStart);
 		EnhancedInputComponent->BindAction(InteractAction, ETriggerEvent::Triggered, this, &ASideScrollingCharacter::DoInteract);
 		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &ASideScrollingCharacter::Move);
 		EnhancedInputComponent->BindAction(DropAction, ETriggerEvent::Triggered, this, &ASideScrollingCharacter::Drop);
@@ -310,6 +551,7 @@ void ASideScrollingCharacter::NotifyHit(class UPrimitiveComponent* MyComp, AActo
 void ASideScrollingCharacter::Landed(const FHitResult& Hit)
 {
 	Super::Landed(Hit);
+    if (auto* Movement = Cast<UQuasicomboPlayerMovement>(GetCharacterMovement())) Movement->ClearWall(0);
 
 	// reset advanced movement state
 	bHasDoubleJumped = false;
@@ -320,7 +562,7 @@ void ASideScrollingCharacter::Landed(const FHitResult& Hit)
 		EndDash();
 	}
 
-	SetJumpTrailState(false);
+	UpdateMikeJumpTrailState(false);
 
 	// Finish any partial hit-reaction ragdoll when the living player lands.
 	if (CurrentHP > 0.0f)
@@ -332,6 +574,8 @@ void ASideScrollingCharacter::Landed(const FHitResult& Hit)
 void ASideScrollingCharacter::OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 PreviousCustomMode)
 {
 	Super::OnMovementModeChanged(PrevMovementMode, PreviousCustomMode);
+    if (!GetCharacterMovement()->IsFalling())
+        if (auto* Movement = Cast<UQuasicomboPlayerMovement>(GetCharacterMovement())) Movement->ClearWall(0);
 
 	if (GetCharacterMovement()->MovementMode == EMovementMode::MOVE_Falling)
 	{
@@ -377,6 +621,14 @@ void ASideScrollingCharacter::ChargedAttackReleased()
 
 void ASideScrollingCharacter::DoMove(float Forward)
 {
+    if (IsInFatalTrap()) return;
+    ActionValueY = Forward;
+    if (auto* Movement = Cast<UQuasicomboPlayerMovement>(GetCharacterMovement())) Movement->SetHorizontalInput(Forward);
+	if (BusterCannon && FMath::Abs(Forward) > 0.05f) BusterCannon->CancelHeldPose();
+	if (const UQuasicomboRunSubsystem* Run = GetWorld()->GetSubsystem<UQuasicomboRunSubsystem>())
+	{
+		if (Run->GetOutcome() != EQuasicomboRunOutcome::Playing || Run->IsBossCombatLocked()) return;
+	}
 	if (AQuasicomboBoss* Boss = Cast<AQuasicomboBoss>(UGameplayStatics::GetActorOfClass(this, AQuasicomboBoss::StaticClass())))
 	{
 		if (Boss->QTE && Boss->QTE->IsQTEActive()) return;
@@ -392,13 +644,25 @@ void ASideScrollingCharacter::DoMove(float Forward)
 
 void ASideScrollingCharacter::DoDrop(float Value)
 {
+    if (IsInFatalTrap()) return;
 	DropValue = Value;
 }
 
 void ASideScrollingCharacter::DoJumpStart()
 {
+	if (BusterCannon) BusterCannon->CancelHeldPose();
 	if (SubmitFinisherInput(this, EQuasicomboQTEInput::Jump)) return;
 	MultiJump();
+}
+
+void ASideScrollingCharacter::UpdateMikeJumpTrailState(bool bEnabled)
+{
+	for (UNiagaraComponent* Trail : {MikeLeftJumpTrail.Get(), MikeRightJumpTrail.Get()})
+	{
+		if (!Trail) continue;
+		if (bEnabled && !Trail->IsActive()) Trail->Activate(true);
+		else if (!bEnabled && Trail->IsActive()) Trail->Deactivate();
+	}
 }
 
 void ASideScrollingCharacter::DoJumpEnd()
@@ -408,7 +672,9 @@ void ASideScrollingCharacter::DoJumpEnd()
 
 void ASideScrollingCharacter::DoDash()
 {
+    if (BusterCannon) BusterCannon->CancelFire();
 	if (SubmitFinisherInput(this, EQuasicomboQTEInput::Dash)) return;
+    if (auto* Movement = Cast<UQuasicomboPlayerMovement>(GetCharacterMovement())) Movement->ClearWall();
 	// One dash per airtime, matching the Platforming variant.
 	if (bHasDashed || (bIsAttacking && !bIsChargingAttack) || CurrentHP <= 0.0f)
 	{
@@ -419,11 +685,17 @@ void ASideScrollingCharacter::DoDash()
 	if (bChargedDashAttack)
 	{
 		++CurrentStrikeSerial;
+		GetWorldTimerManager().ClearTimer(FallbackAttackStrikeTimer);
+		GetWorldTimerManager().ClearTimer(FallbackAttackRecoveryTimer);
+		bUsingFallbackChargedAttack = false;
 		CachedAttackInputTime = -1000.0f;
 		bIsChargingAttack = false;
 		bIsAttacking = false;
 		HitActorsThisStrike.Reset();
-		if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance()) AnimInstance->Montage_Stop(0.05f, ChargedAttackMontage);
+		if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+		{
+			AnimInstance->Montage_Stop(0.05f, bMikeAnimationActive ? MikeChargedHoldMontage : ChargedAttackMontage);
+		}
 		OnChargedDashStarted();
 	}
 
@@ -436,10 +708,37 @@ void ASideScrollingCharacter::DoDash()
 	const float DashDirection = !FMath::IsNearlyZero(ActionValueY) ? FMath::Sign(ActionValueY) : FMath::Sign(GetActorForwardVector().X);
 	GetCharacterMovement()->Velocity = FVector(DashDirection * DashHorizontalSpeed, 0.0f, 0.0f);
 
-	SetJumpTrailState(true);
+	UpdateMikeJumpTrailState(true);
 	if (bChargedDashAttack)
 	{
 		GetWorldTimerManager().SetTimer(ChargedDashStrikeTimer, this, &ASideScrollingCharacter::PerformChargedDashStrike, FMath::Max(0.01f, ChargedDashStrikeDelay), false);
+	}
+
+	if (bNativeCharacterAnimationActive)
+	{
+		PlayNativeCharacterAnimation(NativeDashAnimation, true, DashFallbackDuration);
+	}
+	if (bMikeAnimationActive && MikeDashMontage)
+	{
+		if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+		{
+			if (AnimInstance->Montage_Play(MikeDashMontage, MikeDashPlayRate) > 0.0f)
+			{
+				// The visual clip is shorter than the original dash. Loop it until
+				// the gameplay timer ends so the animation covers the full gap jump.
+				const FName Section = MikeDashMontage->GetSectionName(0);
+				AnimInstance->Montage_SetNextSection(Section, Section, MikeDashMontage);
+			}
+		}
+	}
+	if (bNativeCharacterAnimationActive || bMikeAnimationActive)
+	{
+		OnFallbackDashStarted();
+		const float MinimumFallbackDuration = bChargedDashAttack ? ChargedDashStrikeDelay + 0.02f : 0.01f;
+		GetWorldTimerManager().SetTimer(
+			DashFallbackTimer, this, &ASideScrollingCharacter::EndDash,
+			FMath::Max(DashFallbackDuration, MinimumFallbackDuration), false);
+		return;
 	}
 
 	// AM_Dash contains the template's dash/root-motion behavior.
@@ -457,9 +756,17 @@ void ASideScrollingCharacter::DoDash()
 		}
 	}
 
-	// Never leave the character floating if the montage could not play.
-	if (bChargedDashAttack) PerformChargedDashStrike();
-	EndDash();
+	// Keep dash gameplay alive even when the replacement rig cannot play the
+	// Manny montage. Blueprint can use this hook to play a native Mike clip.
+	OnFallbackDashStarted();
+	const float MinimumFallbackDuration = bChargedDashAttack ? ChargedDashStrikeDelay + 0.02f : 0.01f;
+	GetWorldTimerManager().SetTimer(
+		DashFallbackTimer,
+		this,
+		&ASideScrollingCharacter::EndDash,
+		FMath::Max(DashFallbackDuration, MinimumFallbackDuration),
+		false
+	);
 }
 
 void ASideScrollingCharacter::PerformChargedDashStrike()
@@ -484,8 +791,16 @@ void ASideScrollingCharacter::EndDash()
 
 	GetCharacterMovement()->GravityScale = PreDashGravityScale;
 	bIsDashing = false;
+	GetWorldTimerManager().ClearTimer(DashFallbackTimer);
 	GetWorldTimerManager().ClearTimer(ChargedDashStrikeTimer);
 	bChargedDashAttack = false;
+	if (bMikeAnimationActive && MikeDashMontage)
+	{
+		if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+		{
+			AnimInstance->Montage_Stop(0.05f, MikeDashMontage);
+		}
+	}
 	if (GetCharacterMovement()->IsFalling())
 	{
 		// Root motion can leave the movement velocity at zero when a dash ends.
@@ -495,7 +810,12 @@ void ASideScrollingCharacter::EndDash()
 		ExitVelocity.Z = PreDashVelocity.Z;
 		GetCharacterMovement()->Velocity = ExitVelocity;
 	}
-	SetJumpTrailState(false);
+	if (GetCharacterMovement()->IsMovingOnGround()) UpdateMikeJumpTrailState(false);
+	if (bNativeCharacterAnimationActive)
+	{
+		NativeAnimationLockUntil = 0.0f;
+		UpdateNativeCharacterAnimation();
+	}
 
 	if (GetCharacterMovement()->IsMovingOnGround())
 	{
@@ -503,8 +823,16 @@ void ASideScrollingCharacter::EndDash()
 	}
 }
 
+void ASideScrollingCharacter::DoInteractStart()
+{
+    SubmitFinisherInput(this,EQuasicomboQTEInput::Chomp);
+}
+
 void ASideScrollingCharacter::DoInteract()
 {
+    if (IsInFatalTrap()) return;
+	if (const auto* Run = GetWorld()->GetSubsystem<UQuasicomboRunSubsystem>();
+		Run && (Run->GetOutcome() != EQuasicomboRunOutcome::Playing || Run->IsBossCombatLocked())) return;
 	FHitResult OutHit;
 
 	const FVector Start = GetActorLocation();
@@ -531,7 +859,9 @@ void ASideScrollingCharacter::DoInteract()
 
 void ASideScrollingCharacter::DoComboAttackStart()
 {
+    if (BusterCannon) BusterCannon->CancelFire();
 	if (SubmitFinisherInput(this, EQuasicomboQTEInput::Attack)) return;
+    if (auto* Movement = Cast<UQuasicomboPlayerMovement>(GetCharacterMovement())) Movement->ClearWall();
 	if (CurrentHP <= 0.0f)
 	{
 		return;
@@ -539,14 +869,25 @@ void ASideScrollingCharacter::DoComboAttackStart()
 
 	if (bIsDashing)
 	{
-		if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance()) AnimInstance->Montage_Stop(0.05f, DashMontage);
+		if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+		{
+			AnimInstance->Montage_Stop(0.05f, bMikeAnimationActive ? MikeDashMontage : DashMontage);
+		}
 		EndDash();
 	}
 
 	if (bIsAttacking)
 	{
-		CachedAttackInputTime = GetWorld()->GetTimeSeconds();
-		if (!bIsChargingAttack) bComboAdvanceQueued = true;
+		if (bMikeAnimationActive && !bIsChargingAttack)
+		{
+			const int32 RemainingStages = FMath::Max(0, MikeComboMontages.Num() - 1 - MikeComboStage);
+			MikeBufferedComboInputs = FMath::Min(MikeBufferedComboInputs + 1, RemainingStages);
+		}
+		else
+		{
+			CachedAttackInputTime = GetWorld()->GetTimeSeconds();
+			if (!bIsChargingAttack) bComboAdvanceQueued = true;
+		}
 		return;
 	}
 
@@ -560,7 +901,9 @@ void ASideScrollingCharacter::DoComboAttackEnd()
 
 void ASideScrollingCharacter::DoChargedAttackStart()
 {
-	if (SubmitFinisherInput(this, EQuasicomboQTEInput::Invalid)) return;
+    if (BusterCannon) BusterCannon->CancelFire();
+	if (SubmitFinisherInput(this, EQuasicomboQTEInput::Claw)) return;
+    if (auto* Movement = Cast<UQuasicomboPlayerMovement>(GetCharacterMovement())) Movement->ClearWall();
 	if (CurrentHP <= 0.0f)
 	{
 		return;
@@ -568,7 +911,10 @@ void ASideScrollingCharacter::DoChargedAttackStart()
 
 	if (bIsDashing)
 	{
-		if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance()) AnimInstance->Montage_Stop(0.05f, DashMontage);
+		if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+		{
+			AnimInstance->Montage_Stop(0.05f, bMikeAnimationActive ? MikeDashMontage : DashMontage);
+		}
 		EndDash();
 	}
 
@@ -590,7 +936,23 @@ void ASideScrollingCharacter::DoChargedAttackStart()
 
 void ASideScrollingCharacter::DoChargedAttackEnd()
 {
+    if (IsInFatalTrap()) return;
+    if(const auto* Run=GetWorld()->GetSubsystem<UQuasicomboRunSubsystem>();Run&&Run->IsBossCombatLocked()) return;
 	bIsChargingAttack = false;
+	if (bMikeAnimationActive && bIsAttacking && !bMikeChargedReleaseActive && !bUsingFallbackChargedAttack &&
+		MikeChargedHoldMontage && GetMesh()->GetAnimInstance() &&
+		GetMesh()->GetAnimInstance()->Montage_IsPlaying(MikeChargedHoldMontage))
+	{
+		ReleaseMikeChargedAttack();
+		return;
+	}
+
+	if (bUsingFallbackChargedAttack)
+	{
+		bHasReleasedChargedAttack = true;
+		PerformFallbackChargedStrike();
+		return;
+	}
 
 	if (bHasLoopedChargedAttack && !bHasReleasedChargedAttack)
 	{
@@ -618,36 +980,27 @@ void ASideScrollingCharacter::MultiJump()
 	if (!GetCharacterMovement()->IsFalling())
 	{
 		Jump();
+		UpdateMikeJumpTrailState(true);
 		return;
 	}
 
-	if (!bHasWallJumped && !FMath::IsNearlyZero(ActionValueY))
+	FVector WallNormal;
+	UQuasicomboPlayerMovement* WallMovement = Cast<UQuasicomboPlayerMovement>(GetCharacterMovement());
+	if (!bHasWallJumped && WallMovement && WallMovement->ConsumeWallJump(WallNormal))
 	{
-		FHitResult OutHit;
-
-		const FVector Start = GetActorLocation();
-		const FVector End = Start + (FVector(ActionValueY > 0.0f ? 1.0f : -1.0f, 0.0f, 0.0f) * WallJumpTraceDistance);
-
-		FCollisionQueryParams QueryParams;
-		QueryParams.AddIgnoredActor(this);
-
-		GetWorld()->LineTraceSingleByChannel(OutHit, Start, End, ECC_Visibility, QueryParams);
-
-		if (OutHit.bBlockingHit)
-		{
-			const FRotator BounceRot = UKismetMathLibrary::MakeRotFromX(OutHit.ImpactNormal);
+			const FRotator BounceRot = UKismetMathLibrary::MakeRotFromX(WallNormal);
 			SetActorRotation(FRotator(0.0f, BounceRot.Yaw, 0.0f));
 
-			FVector WallJumpImpulse = OutHit.ImpactNormal * WallJumpHorizontalImpulse;
+			FVector WallJumpImpulse = WallNormal * WallJumpHorizontalImpulse;
 			WallJumpImpulse.Z = GetCharacterMovement()->JumpZVelocity * WallJumpVerticalMultiplier;
 
 			LaunchCharacter(WallJumpImpulse, true, true);
+			UpdateMikeJumpTrailState(true);
 
 			bHasWallJumped = true;
 			GetWorld()->GetTimerManager().SetTimer(WallJumpTimer, this, &ASideScrollingCharacter::ResetWallJump, DelayBetweenWallJumps, false);
 
 			return;
-		}
 	}
 
 	if (!bHasWallJumped)
@@ -655,11 +1008,13 @@ void ASideScrollingCharacter::MultiJump()
 		if (GetWorld()->GetTimeSeconds() - LastFallTime < MaxCoyoteTime)
 		{
 			Jump();
+			UpdateMikeJumpTrailState(true);
 		}
 		else if (!bHasDoubleJumped)
 		{
 			bHasDoubleJumped = true;
 			Jump();
+			UpdateMikeJumpTrailState(true);
 		}
 	}
 }
@@ -726,17 +1081,58 @@ void ASideScrollingCharacter::RegisterHitCombo()
 		);
 	}
 
+	UpdateHitComboTimerHold();
 	OnHitComboStateChanged();
+}
+
+void ASideScrollingCharacter::SetQTEComboHeld(bool bHeld)
+{
+    if(bQTEComboHeld==bHeld) return;
+    bQTEComboHeld=bHeld;
+    if (bHeld)
+        if (auto* Movement = Cast<UQuasicomboPlayerMovement>(GetCharacterMovement())) Movement->ClearWall();
+	UpdateHitComboTimerHold();
+}
+
+void ASideScrollingCharacter::SetEvolutionComboHeld(bool bHeld)
+{
+	if (bEvolutionComboHeld == bHeld) return;
+	bEvolutionComboHeld = bHeld;
+	UpdateHitComboTimerHold();
+}
+
+void ASideScrollingCharacter::UpdateHitComboTimerHold()
+{
+	if (bQTEComboHeld || bEvolutionComboHeld) GetWorldTimerManager().PauseTimer(HitComboResetTimer);
+	else GetWorldTimerManager().UnPauseTimer(HitComboResetTimer);
+}
+void ASideScrollingCharacter::ApplyQTECounterDamage()
+{
+    if(CurrentHP<=0) return;
+    const float Damage=CurrentHP*.5f;
+    CurrentHP-=Damage; bHasTakenDamage=true; RecordCombatActivity();
+    if(auto* Run=GetWorld()->GetSubsystem<UQuasicomboRunSubsystem>()) Run->RecordDamageTaken(Damage);
+    UpdateLifeBar();
 }
 
 void ASideScrollingCharacter::PrepareForFinisher()
 {
+    if (auto* Movement = Cast<UQuasicomboPlayerMovement>(GetCharacterMovement())) Movement->ClearWall();
+    if (BusterCannon) BusterCannon->CancelFire();
 	if (bIsDashing) EndDash();
+	GetWorldTimerManager().ClearTimer(FallbackAttackStrikeTimer);
+	GetWorldTimerManager().ClearTimer(FallbackAttackRecoveryTimer);
+	bUsingFallbackChargedAttack = false;
 	CachedAttackInputTime = -1000.0f;
 	bIsAttacking = false;
 	bIsChargingAttack = false;
 	bHasLoopedChargedAttack = false;
 	bHasReleasedChargedAttack = false;
+	bMikeComboWindowOpen = false;
+	bMikeChargedReleaseActive = false;
+	MikeBufferedComboInputs = 0;
+	MikeComboStage = INDEX_NONE;
+	ActiveMikeAttackMontage = nullptr;
 	HitActorsThisStrike.Reset();
 	GetCharacterMovement()->StopMovementImmediately();
 	if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance()) AnimInstance->StopAllMontages(0.1f);
@@ -754,6 +1150,33 @@ void ASideScrollingCharacter::ResetHitCombo()
 	}
 }
 
+void ASideScrollingCharacter::ResetForBossRetry(const FTransform& Transform)
+{
+	PrepareForFinisher();
+	ResetHitCombo();
+	GetWorldTimerManager().ClearTimer(WallJumpTimer);
+	GetWorldTimerManager().ClearTimer(ChargedDashStrikeTimer);
+	GetWorldTimerManager().ClearTimer(RespawnTimer);
+	GetWorldTimerManager().ClearTimer(DeathRagdollTimer);
+	bComboAdvanceQueued = false;
+	bHasDashed = bHasDoubleJumped = bHasWallJumped = false;
+	GetMesh()->SetSimulatePhysics(false);
+	GetMesh()->SetPhysicsBlendWeight(0.0f);
+	if (bDeathRagdollStarted)
+	{
+		GetMesh()->SetCollisionEnabled(PreDeathMeshCollision);
+		GetMesh()->AttachToComponent(GetCapsuleComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+		GetMesh()->SetRelativeTransform(PreDeathMeshTransform);
+		GetMesh()->bPauseAnims = bPreDeathPauseAnims;
+		bDeathRagdollStarted = false;
+	}
+	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	SetActorTransform(Transform, false, nullptr, ETeleportType::TeleportPhysics);
+	GetCharacterMovement()->StopMovementImmediately();
+	GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+	ResetHP();
+}
+
 float ASideScrollingCharacter::GetHitComboTimeRemaining() const
 {
 	if (!GetWorld())
@@ -769,6 +1192,10 @@ void ASideScrollingCharacter::ResetHP()
 {
 	CurrentHP = MaxHP;
 	bHasTakenDamage = false;
+    FatalTrapSource.Reset();
+    LastCombatActivityTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0;
+	PendingDeathImpulse = FVector::ZeroVector;
+	PendingDeathImpactPoint = FVector::ZeroVector;
 
 	if (LifeBar)
 	{
@@ -800,10 +1227,36 @@ void ASideScrollingCharacter::ComboAttack()
 	bIsChargingAttack = false;
 	bComboAdvanceQueued = false;
 	ComboCount = 0;
+	bMikeComboWindowOpen = false;
 
 	NotifyEnemiesOfIncomingAttack();
+	if (bMikeAnimationActive && MikeComboMontages.Num() == 5)
+	{
+		MikeComboStage = MikeComboStage == INDEX_NONE ? 0 : FMath::Min(MikeComboStage + 1, MikeComboMontages.Num() - 1);
+		UAnimMontage* MikeMontage = MikeComboMontages[MikeComboStage].Get();
+		if (MikeMontage)
+		{
+			if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+			{
+				ActiveMikeAttackMontage = MikeMontage;
+				const bool bUppercut = MikeComboStage == 1 || MikeComboStage == 4;
+				if (AnimInstance->Montage_Play(MikeMontage, bUppercut ? MikeUppercutPlayRate : MikeComboPlayRate) > 0.0f)
+				{
+					AnimInstance->Montage_SetEndDelegate(OnAttackMontageEnded, MikeMontage);
+					return;
+				}
+				ActiveMikeAttackMontage = nullptr;
+			}
+		}
+	}
 
-	if (ComboAttackMontage)
+	if (bNativeCharacterAnimationActive && NativeComboAnimations.Num() > 0)
+	{
+		const int32 AnimationIndex = static_cast<int32>((CurrentStrikeSerial - 1) % NativeComboAnimations.Num());
+		PlayNativeCharacterAnimation(NativeComboAnimations[AnimationIndex], false, FallbackComboRecoveryTime);
+	}
+
+	if (!bNativeCharacterAnimationActive && !bMikeAnimationActive && ComboAttackMontage)
 	{
 		if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
 		{
@@ -817,21 +1270,68 @@ void ASideScrollingCharacter::ComboAttack()
 		}
 	}
 
-	bIsAttacking = false;
+	OnFallbackComboAttackStarted(CurrentStrikeSerial);
+	GetWorldTimerManager().ClearTimer(FallbackAttackStrikeTimer);
+	GetWorldTimerManager().ClearTimer(FallbackAttackRecoveryTimer);
+
+	if (FallbackComboStrikeDelay <= 0.0f)
+	{
+		PerformFallbackComboStrike();
+	}
+	else
+	{
+		GetWorldTimerManager().SetTimer(
+			FallbackAttackStrikeTimer,
+			this,
+			&ASideScrollingCharacter::PerformFallbackComboStrike,
+			FallbackComboStrikeDelay,
+			false
+		);
+	}
+
+	GetWorldTimerManager().SetTimer(
+		FallbackAttackRecoveryTimer,
+		this,
+		&ASideScrollingCharacter::FinishFallbackAttack,
+		FMath::Max(FallbackComboRecoveryTime, FallbackComboStrikeDelay + 0.01f),
+		false
+	);
 }
 
 void ASideScrollingCharacter::ChargedAttack()
 {
+	MikeComboStage = INDEX_NONE;
+	MikeBufferedComboInputs = 0;
 	++CurrentStrikeSerial;
 	HitActorsThisStrike.Reset();
 	bIsAttacking = true;
 	bComboAdvanceQueued = false;
 	bHasLoopedChargedAttack = false;
 	bHasReleasedChargedAttack = false;
+	bMikeChargedReleaseActive = false;
+	bUsingFallbackChargedAttack = false;
 
 	NotifyEnemiesOfIncomingAttack();
+	if (bMikeAnimationActive && MikeChargedHoldMontage)
+	{
+		if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+		{
+			if (AnimInstance->Montage_Play(MikeChargedHoldMontage) > 0.0f)
+			{
+				ActiveMikeAttackMontage = MikeChargedHoldMontage;
+				const FName Section = MikeChargedHoldMontage->GetSectionName(0);
+				AnimInstance->Montage_SetNextSection(Section, Section, MikeChargedHoldMontage);
+				return;
+			}
+		}
+	}
 
-	if (ChargedAttackMontage)
+	if (bNativeCharacterAnimationActive)
+	{
+		PlayNativeCharacterAnimation(NativeChargedHoldAnimation, true);
+	}
+
+	if (!bNativeCharacterAnimationActive && !bMikeAnimationActive && ChargedAttackMontage)
 	{
 		if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
 		{
@@ -845,23 +1345,117 @@ void ASideScrollingCharacter::ChargedAttack()
 		}
 	}
 
-	bIsAttacking = false;
+	bUsingFallbackChargedAttack = true;
+	OnFallbackChargedAttackStarted(CurrentStrikeSerial);
+}
+
+void ASideScrollingCharacter::PerformFallbackComboStrike()
+{
+	if (bIsAttacking && CurrentHP > 0.0f)
+	{
+		DoAttackTrace(NAME_None);
+	}
+}
+
+void ASideScrollingCharacter::PerformFallbackChargedStrike()
+{
+	if (!bUsingFallbackChargedAttack)
+	{
+		return;
+	}
+
+	bUsingFallbackChargedAttack = false;
+	GetWorldTimerManager().ClearTimer(FallbackAttackStrikeTimer);
+
+	if (bIsAttacking && CurrentHP > 0.0f)
+	{
+		if (bNativeCharacterAnimationActive)
+		{
+			PlayNativeCharacterAnimation(NativeChargedReleaseAnimation, false, FallbackChargedRecoveryTime);
+		}
+		DoAttackTrace(NAME_None);
+		OnFallbackChargedAttackReleased(CurrentStrikeSerial);
+	}
+
+	GetWorldTimerManager().ClearTimer(FallbackAttackRecoveryTimer);
+	GetWorldTimerManager().SetTimer(
+		FallbackAttackRecoveryTimer,
+		this,
+		&ASideScrollingCharacter::FinishFallbackAttack,
+		FallbackChargedRecoveryTime,
+		false
+	);
+}
+
+void ASideScrollingCharacter::ReleaseMikeChargedAttack()
+{
+	if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+	{
+		if (MikeChargedHoldMontage)
+		{
+			AnimInstance->Montage_Stop(0.05f, MikeChargedHoldMontage);
+		}
+		if (MikeChargedReleaseMontage && AnimInstance->Montage_Play(MikeChargedReleaseMontage, MikeChargedReleasePlayRate) > 0.0f)
+		{
+			ActiveMikeAttackMontage = MikeChargedReleaseMontage;
+			bMikeChargedReleaseActive = true;
+			AnimInstance->Montage_SetEndDelegate(OnAttackMontageEnded, MikeChargedReleaseMontage);
+			return;
+		}
+	}
+
+	// Keep the charged strike playable if the montage or AnimBP is unavailable.
+	bUsingFallbackChargedAttack = true;
+	PerformFallbackChargedStrike();
+}
+
+void ASideScrollingCharacter::FinishFallbackAttack()
+{
+	bUsingFallbackChargedAttack = false;
+	GetWorldTimerManager().ClearTimer(FallbackAttackStrikeTimer);
+	GetWorldTimerManager().ClearTimer(FallbackAttackRecoveryTimer);
+	NativeAnimationLockUntil = 0.0f;
+	AttackMontageEnded(nullptr, false);
+	UpdateNativeCharacterAnimation();
 }
 
 void ASideScrollingCharacter::AttackMontageEnded(UAnimMontage* Montage, bool bInterrupted)
 {
+	// Starting the next Mike montage can interrupt the outgoing one in the
+	// same frame. Its stale callback must not clear the new attack's state.
+	if (bMikeAnimationActive && Montage && Montage != ActiveMikeAttackMontage) return;
+	ActiveMikeAttackMontage = nullptr;
+	const bool bChainBufferedMikeCombo = bMikeAnimationActive && !bInterrupted &&
+		!bIsChargingAttack && Montage != MikeChargedReleaseMontage &&
+		MikeComboStage != INDEX_NONE && MikeComboStage < MikeComboMontages.Num() - 1 &&
+		MikeBufferedComboInputs > 0;
+	if (bChainBufferedMikeCombo) --MikeBufferedComboInputs;
+	const bool bMikeCanChain = !bMikeAnimationActive || Montage == nullptr || bIsChargingAttack ||
+		(bMikeComboWindowOpen && bComboAdvanceQueued) || Montage == MikeChargedReleaseMontage;
 	bIsAttacking = false;
 	bComboAdvanceQueued = false;
+	bMikeComboWindowOpen = false;
+	bMikeChargedReleaseActive = false;
 	bHasLoopedChargedAttack = false;
 	bHasReleasedChargedAttack = false;
 
 	if (CurrentHP <= 0.0f || bInterrupted)
 	{
 		CachedAttackInputTime = -1000.0f;
+		MikeBufferedComboInputs = 0;
+		MikeComboStage = INDEX_NONE;
 		return;
 	}
+	if (bChainBufferedMikeCombo)
+	{
+		ComboAttack();
+		return;
+	}
+	MikeBufferedComboInputs = 0;
+	MikeComboStage = INDEX_NONE;
 
-	if (CachedAttackInputTime >= 0.0f && GetWorld()->GetTimeSeconds() - CachedAttackInputTime <= AttackInputCacheTimeTolerance)
+	if (bMikeCanChain && CachedAttackInputTime >= 0.0f &&
+		GetWorld()->GetTimeSeconds() - CachedAttackInputTime <= AttackInputCacheTimeTolerance)
 	{
 		CachedAttackInputTime = -1000.0f;
 
@@ -876,11 +1470,85 @@ void ASideScrollingCharacter::AttackMontageEnded(UAnimMontage* Montage, bool bIn
 	}
 }
 
+FVector ASideScrollingCharacter::ResolveAttackTraceStart(FName RequestedSource) const
+{
+	const USkeletalMeshComponent* MeshComponent = GetMesh();
+	if (MeshComponent)
+	{
+		if (!RequestedSource.IsNone() &&
+			(MeshComponent->DoesSocketExist(RequestedSource) || MeshComponent->GetBoneIndex(RequestedSource) != INDEX_NONE))
+		{
+			return MeshComponent->GetSocketLocation(RequestedSource);
+		}
+
+		for (const FName Candidate : AttackTraceFallbackSockets)
+		{
+			if (!Candidate.IsNone() &&
+				(MeshComponent->DoesSocketExist(Candidate) || MeshComponent->GetBoneIndex(Candidate) != INDEX_NONE))
+			{
+				return MeshComponent->GetSocketLocation(Candidate);
+			}
+		}
+
+		// Last-resort heuristic for third-party rigs whose exact bone names are
+		// unknown at compile time. Prefer a hand/claw/buster-style bone.
+		for (int32 BoneIndex = 0; BoneIndex < MeshComponent->GetNumBones(); ++BoneIndex)
+		{
+			const FName BoneName = MeshComponent->GetBoneName(BoneIndex);
+			const FString LowerBoneName = BoneName.ToString().ToLower();
+			if (LowerBoneName.Contains(TEXT("hand")) ||
+				LowerBoneName.Contains(TEXT("claw")) ||
+				LowerBoneName.Contains(TEXT("buster")))
+			{
+				return MeshComponent->GetSocketLocation(BoneName);
+			}
+		}
+	}
+
+	return GetActorLocation() + FVector(0.0f, 0.0f, 25.0f);
+}
+
+FName ASideScrollingCharacter::ResolvePhysicsAnchorBone() const
+{
+	const USkeletalMeshComponent* MeshComponent = GetMesh();
+	if (!MeshComponent)
+	{
+		return NAME_None;
+	}
+
+	if (!PelvisBoneName.IsNone() && MeshComponent->GetBoneIndex(PelvisBoneName) != INDEX_NONE)
+	{
+		return PelvisBoneName;
+	}
+
+	for (const FName Candidate : PhysicsAnchorBoneCandidates)
+	{
+		if (!Candidate.IsNone() && MeshComponent->GetBoneIndex(Candidate) != INDEX_NONE)
+		{
+			return Candidate;
+		}
+	}
+
+	for (int32 BoneIndex = 0; BoneIndex < MeshComponent->GetNumBones(); ++BoneIndex)
+	{
+		const FName BoneName = MeshComponent->GetBoneName(BoneIndex);
+		const FString LowerBoneName = BoneName.ToString().ToLower();
+		if (LowerBoneName.Contains(TEXT("pelvis")) ||
+			LowerBoneName.Contains(TEXT("hip")) ||
+			LowerBoneName.Contains(TEXT("waist")))
+		{
+			return BoneName;
+		}
+	}
+
+	return MeshComponent->GetNumBones() > 0 ? MeshComponent->GetBoneName(0) : NAME_None;
+}
+
 void ASideScrollingCharacter::DoAttackTrace(FName DamageSourceBone)
 {
 	TArray<FHitResult> OutHits;
 
-	const FVector TraceStart = DamageSourceBone.IsNone() ? GetActorLocation() + FVector(0.0f, 0.0f, 25.0f) : GetMesh()->GetSocketLocation(DamageSourceBone);
+	const FVector TraceStart = ResolveAttackTraceStart(DamageSourceBone);
 	const FVector TraceEnd = TraceStart + (GetActorForwardVector() * MeleeTraceDistance);
 
 	FCollisionObjectQueryParams ObjectParams;
@@ -909,11 +1577,24 @@ void ASideScrollingCharacter::DoAttackTrace(FName DamageSourceBone)
 				const float Knockback = bChargedDashAttack ? ChargedDashKnockbackMultiplier : 1.0f;
 				const FVector Impulse = (CurrentHit.ImpactNormal * -MeleeKnockbackImpulse * Knockback) + (FVector::UpVector * MeleeLaunchImpulse);
 
-				Damageable->ApplyDamage(MeleeDamage, this, CurrentHit.ImpactPoint, Impulse);
-				if (!CombatEnemy || CombatEnemy->CurrentHP < HPBefore || (SideEnemy && SideEnemy->GetAcceptedStrikes() > StrikesBefore))
+				const float StrikeDamage = bMikeAnimationActive && MikeComboStage != INDEX_NONE &&
+					!bIsChargingAttack && !bMikeChargedReleaseActive
+					? MeleeDamage + MikeComboDamageStep * MikeComboStage : MeleeDamage;
+				Damageable->ApplyDamage(StrikeDamage, this, CurrentHit.ImpactPoint, Impulse);
+				const bool bAccepted = SideEnemy ? SideEnemy->GetAcceptedStrikes() > StrikesBefore
+                    : CombatEnemy ? CombatEnemy->CurrentHP < HPBefore : true;
+				if (bAccepted)
 				{
-					DealtDamage(MeleeDamage, CurrentHit.ImpactPoint);
+                    RecordCombatActivity();
+					DealtDamage(StrikeDamage, CurrentHit.ImpactPoint);
 					RegisterHitCombo();
+					if (bMikeAnimationActive && MikeComboStage != INDEX_NONE)
+					{
+						USoundBase* ImpactSound = MikeComboStage == 1 || MikeComboStage == 4
+							? MikeUppercutImpactSound.Get() : MikeComboStage == 3
+								? MikePunchLeftImpactSound.Get() : MikePunchRightImpactSound.Get();
+						if (ImpactSound) UGameplayStatics::PlaySoundAtLocation(this, ImpactSound, CurrentHit.ImpactPoint);
+					}
 				}
 			}
 		}
@@ -922,6 +1603,11 @@ void ASideScrollingCharacter::DoAttackTrace(FName DamageSourceBone)
 
 void ASideScrollingCharacter::CheckCombo()
 {
+	if (bMikeAnimationActive)
+	{
+		bMikeComboWindowOpen = bIsAttacking && !bIsChargingAttack;
+		return;
+	}
 	if (!bIsAttacking || bIsChargingAttack || !bComboAdvanceQueued || !ComboAttackMontage) return;
 	const int32 NextSection = ComboCount + 1;
 	if (!ComboSectionNames.IsValidIndex(NextSection)) return;
@@ -940,6 +1626,7 @@ void ASideScrollingCharacter::CheckCombo()
 
 void ASideScrollingCharacter::CheckChargedAttack()
 {
+	if (bMikeAnimationActive) return;
 	bHasLoopedChargedAttack = true;
 	bHasReleasedChargedAttack = !bIsChargingAttack;
 	LoopOrResolveChargedAttack();
@@ -993,6 +1680,19 @@ void ASideScrollingCharacter::NotifyEnemiesOfIncomingAttack()
 	}
 }
 
+UAnimMontage* ASideScrollingCharacter::SelectMikeHitMontage(const AActor* DamageCauser, const FVector& DamageLocation, const FVector& DamageImpulse) const
+{
+	FVector ToSource = DamageCauser ? DamageCauser->GetActorLocation() - GetActorLocation() : DamageLocation - GetActorLocation();
+	if (ToSource.IsNearlyZero()) ToSource = -DamageImpulse;
+	const float Forward = FVector::DotProduct(ToSource, GetActorForwardVector());
+	const float Right = FVector::DotProduct(ToSource, GetActorRightVector());
+	if (FMath::Abs(Forward) >= FMath::Abs(Right))
+	{
+		return Forward >= 0.0f ? MikeHitFrontMontage : MikeHitBackMontage;
+	}
+	return Right >= 0.0f ? MikeHitRightMontage : MikeHitLeftMontage;
+}
+
 void ASideScrollingCharacter::ApplyDamage(float Damage, AActor* DamageCauser, const FVector& DamageLocation, const FVector& DamageImpulse)
 {
 	FDamageEvent DamageEvent;
@@ -1000,23 +1700,48 @@ void ASideScrollingCharacter::ApplyDamage(float Damage, AActor* DamageCauser, co
 
 	if (ActualDamage > 0.0f)
 	{
-		CachedAttackInputTime = -1000.0f;
-		bComboAdvanceQueued = false;
-		bIsAttacking = false;
-		bIsChargingAttack = false;
-		ResetHitCombo();
-		if (bIsDashing) EndDash();
-		if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+        if (BusterCannon) BusterCannon->CancelFire();
+		if (CurrentHP > 0.0f)
 		{
-			AnimInstance->Montage_Stop(0.1f, ComboAttackMontage);
-			AnimInstance->Montage_Stop(0.1f, ChargedAttackMontage);
-			AnimInstance->Montage_Stop(0.1f, DashMontage);
+			GetWorldTimerManager().ClearTimer(FallbackAttackStrikeTimer);
+			GetWorldTimerManager().ClearTimer(FallbackAttackRecoveryTimer);
+			bUsingFallbackChargedAttack = false;
+			CachedAttackInputTime = -1000.0f;
+			bComboAdvanceQueued = false;
+			bMikeComboWindowOpen = false;
+			bMikeChargedReleaseActive = false;
+			MikeBufferedComboInputs = 0;
+			MikeComboStage = INDEX_NONE;
+			ActiveMikeAttackMontage = nullptr;
+			bIsAttacking = false;
+			bIsChargingAttack = false;
+			ResetHitCombo();
+			if (bIsDashing) EndDash();
+			if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+			{
+				AnimInstance->StopAllMontages(0.08f);
+				if (bMikeAnimationActive)
+				{
+					if (UAnimMontage* HitMontage = SelectMikeHitMontage(DamageCauser, DamageLocation, DamageImpulse))
+					{
+						AnimInstance->Montage_Play(HitMontage);
+					}
+				}
+			}
+			if (bNativeCharacterAnimationActive)
+			{
+				PlayNativeCharacterAnimation(NativeHitReactionAnimation, false, 0.20f);
+			}
+			GetCharacterMovement()->AddImpulse(DamageImpulse, true);
 		}
-		GetCharacterMovement()->AddImpulse(DamageImpulse, true);
-
-		if (GetMesh()->IsSimulatingPhysics())
+		else if (GetMesh()->IsSimulatingPhysics())
 		{
 			GetMesh()->AddImpulseAtLocation(DamageImpulse * GetMesh()->GetMass(), DamageLocation);
+		}
+		else
+		{
+			PendingDeathImpulse = DamageImpulse;
+			PendingDeathImpactPoint = DamageLocation;
 		}
 
 		ReceivedDamage(ActualDamage, DamageLocation, DamageImpulse.GetSafeNormal());
@@ -1025,13 +1750,32 @@ void ASideScrollingCharacter::ApplyDamage(float Damage, AActor* DamageCauser, co
 
 void ASideScrollingCharacter::HandleDeath()
 {
+    FatalTrapSource.Reset();
+    if (auto* Movement = Cast<UQuasicomboPlayerMovement>(GetCharacterMovement())) Movement->ClearWall();
+	if (UQuasicomboRunSubsystem* Run = GetWorld()->GetSubsystem<UQuasicomboRunSubsystem>())
+	{
+		if (Run->TryHandleBossFailure() && Run->GetOutcome() == EQuasicomboRunOutcome::Playing)
+		{
+			return;
+		}
+	}
+	GetWorldTimerManager().ClearTimer(FallbackAttackStrikeTimer);
+	GetWorldTimerManager().ClearTimer(FallbackAttackRecoveryTimer);
+	bUsingFallbackChargedAttack = false;
+
 	if (bIsDashing)
 	{
 		EndDash();
 	}
+	UpdateMikeJumpTrailState(false);
 
 	bIsAttacking = false;
 	bIsChargingAttack = false;
+	bMikeComboWindowOpen = false;
+	bMikeChargedReleaseActive = false;
+	MikeBufferedComboInputs = 0;
+	MikeComboStage = INDEX_NONE;
+	ActiveMikeAttackMontage = nullptr;
 	ResetHitCombo();
 
 	if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
@@ -1040,7 +1784,22 @@ void ASideScrollingCharacter::HandleDeath()
 	}
 
 	GetCharacterMovement()->DisableMovement();
-	GetMesh()->SetSimulatePhysics(true);
+	GetMesh()->SetPhysicsBlendWeight(0.0f);
+	bool bDeathMontagePlaying = false;
+	if (bMikeAnimationActive && MikeDeathMontage)
+	{
+		if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+		{
+			const float MontageLength = AnimInstance->Montage_Play(MikeDeathMontage);
+			if (MontageLength > 0.0f)
+			{
+				bDeathMontagePlaying = true;
+				GetWorldTimerManager().SetTimer(DeathRagdollTimer, this, &ASideScrollingCharacter::StartDeathRagdoll,
+					FMath::Clamp(MontageLength - 0.02f, 0.01f, 1.0f), false);
+			}
+		}
+	}
+	if (!bDeathMontagePlaying) StartDeathRagdoll();
 
 	if (LifeBar)
 	{
@@ -1050,6 +1809,30 @@ void ASideScrollingCharacter::HandleDeath()
 	if (UQuasicomboRunSubsystem* Run = GetWorld()->GetSubsystem<UQuasicomboRunSubsystem>())
 	{
 		Run->EndRun(EQuasicomboRunOutcome::Defeat);
+		Run->ExtendDefeatReload(2.6f);
+	}
+}
+
+void ASideScrollingCharacter::StartDeathRagdoll()
+{
+	GetWorldTimerManager().ClearTimer(DeathRagdollTimer);
+	if (CurrentHP > 0.0f || bDeathRagdollStarted) return;
+	USkeletalMeshComponent* DeathMesh = GetMesh();
+	PreDeathMeshCollision = DeathMesh->GetCollisionEnabled();
+	PreDeathMeshTransform = DeathMesh->GetRelativeTransform();
+	bPreDeathPauseAnims = DeathMesh->bPauseAnims;
+	bDeathRagdollStarted = true;
+	// The live pawn's mesh has no physics collision. Enable it before simulation,
+	// and keep the evaluated death pose instead of resuming the idle graph.
+	SetActorEnableCollision(true);
+	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	DeathMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	DeathMesh->bPauseAnims = true;
+	DeathMesh->SetSimulatePhysics(true);
+	DeathMesh->SetPhysicsBlendWeight(1.0f);
+	if (!PendingDeathImpulse.IsNearlyZero())
+	{
+		DeathMesh->AddImpulseAtLocation(PendingDeathImpulse * DeathMesh->GetMass(), PendingDeathImpactPoint);
 	}
 }
 
@@ -1078,13 +1861,20 @@ void ASideScrollingCharacter::RespawnCharacter()
 
 float ASideScrollingCharacter::TakeDamage(float Damage, struct FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
 {
+    if (IsInFatalTrap() && DamageCauser != FatalTrapSource.Get()) return 0;
+	if (const auto* Run = UQuasicomboRunSubsystem::GetRun(this); Run && !Run->HasRunStarted()) return 0.0f;
+	if (const UQuasicomboRunSubsystem* Run = GetWorld()->GetSubsystem<UQuasicomboRunSubsystem>())
+	{
+		if (Run->GetOutcome() != EQuasicomboRunOutcome::Playing || Run->IsBossCombatLocked()) return 0.0f;
+	}
 	if (CurrentHP <= 0.0f || Damage <= 0.0f)
 	{
 		return 0.0f;
 	}
 
 	const float ActualDamage = FMath::Min(Damage, CurrentHP);
-	LastDamageTakenTime = GetWorld()->GetTimeSeconds();
+    RecordCombatActivity();
+    if (auto* Movement = Cast<UQuasicomboPlayerMovement>(GetCharacterMovement())) Movement->ClearWall();
 	bHasTakenDamage = true;
 	if (UQuasicomboRunSubsystem* Run = GetWorld()->GetSubsystem<UQuasicomboRunSubsystem>()) Run->RecordDamageTaken(ActualDamage);
 	CurrentHP -= ActualDamage;
@@ -1099,11 +1889,97 @@ float ASideScrollingCharacter::TakeDamage(float Damage, struct FDamageEvent cons
 	{
 		UpdateLifeBar();
 
-		// Match the Combat template's partial hit reaction while preserving
-		// the SideScroller movement capsule.
-		GetMesh()->SetPhysicsBlendWeight(0.5f);
-		GetMesh()->SetBodySimulatePhysics(PelvisBoneName, false);
+		// Resolve the partial-ragdoll anchor against the active rig instead of
+		// assuming Manny's "pelvis" bone exists.
+		if (!bMikeAnimationActive)
+		{
+			GetMesh()->SetPhysicsBlendWeight(0.5f);
+			const FName PhysicsAnchor = ResolvePhysicsAnchorBone();
+			if (!PhysicsAnchor.IsNone())
+			{
+				GetMesh()->SetBodySimulatePhysics(PhysicsAnchor, false);
+			}
+		}
 	}
 
 	return ActualDamage;
+}
+
+void ASideScrollingCharacter::FireBuster()
+{
+    if(SubmitFinisherInput(this,EQuasicomboQTEInput::Fire)) return;
+    if(BusterCannon) BusterCannon->TryFire();
+}
+void ASideScrollingCharacter::FireBusterReleased(bool bCanceled)
+{
+    if(auto* Run=GetWorld()->GetSubsystem<UQuasicomboRunSubsystem>())
+        if(auto* Director=Run->GetQTEDirector())
+            Director->Submit(EQuasicomboQTEInput::Fire,bCanceled?EQuasicomboQTEInputEdge::Cancel:EQuasicomboQTEInputEdge::Release);
+}
+bool ASideScrollingCharacter::CanFireBuster() const
+{
+    if (IsInFatalTrap()) return false;
+    if (CurrentHP <= 0 || bIsDashing || bIsAttacking || bIsChargingAttack) return false;
+    if (const auto* Run = GetWorld()->GetSubsystem<UQuasicomboRunSubsystem>(); Run &&
+        (Run->GetOutcome() != EQuasicomboRunOutcome::Playing || Run->IsBossCombatLocked())) return false;
+    if (const auto* Boss = Cast<AQuasicomboBoss>(UGameplayStatics::GetActorOfClass(this, AQuasicomboBoss::StaticClass()));
+        Boss && Boss->QTE && Boss->QTE->IsQTEActive()) return false;
+    if (const auto* Anim = GetMesh()->GetAnimInstance())
+        for (auto* Montage : {MikeHitFrontMontage, MikeHitBackMontage, MikeHitLeftMontage, MikeHitRightMontage, MikeDeathMontage})
+            if (Montage && Anim->Montage_IsPlaying(Montage)) return false;
+    return true;
+}
+void ASideScrollingCharacter::ApplyMikeTrailColor(FLinearColor Color)
+{
+    MikeJumpTrailColor = Color;
+    for (auto* Trail : {MikeLeftJumpTrail.Get(), MikeRightJumpTrail.Get()})
+        if (Trail) Trail->SetVariableLinearColor(TEXT("User.Color"), Color);
+}
+
+
+void ASideScrollingCharacter::RecordCombatActivity()
+{
+    if (GetWorld()) LastCombatActivityTime = GetWorld()->GetTimeSeconds();
+}
+
+bool ASideScrollingCharacter::IsWallSliding() const
+{
+    const auto* Movement = Cast<UQuasicomboPlayerMovement>(GetCharacterMovement());
+    return Movement && Movement->IsOnWall();
+}
+
+bool ASideScrollingCharacter::CanAttachToWall() const
+{
+    if (CurrentHP <= 0 || bIsAttacking || bIsChargingAttack || bIsDashing || bQTEComboHeld || IsInFatalTrap()) return false;
+    if (const auto* Run = UQuasicomboRunSubsystem::GetRun(const_cast<ASideScrollingCharacter*>(this)); Run &&
+        (!Run->HasRunStarted() || Run->GetOutcome() != EQuasicomboRunOutcome::Playing || Run->IsBossCombatLocked())) return false;
+    if (const auto* Anim = GetMesh()->GetAnimInstance())
+        for (auto* Montage : {MikeHitFrontMontage, MikeHitBackMontage, MikeHitLeftMontage, MikeHitRightMontage, MikeDeathMontage})
+            if (Montage && Anim->Montage_IsPlaying(Montage)) return false;
+    return true;
+}
+
+bool ASideScrollingCharacter::BeginFatalTrap(AActor* Source)
+{
+    if (!IsValid(Source) || CurrentHP <= 0 || IsInFatalTrap() || bQTEComboHeld) return false;
+    if (const auto* Run = UQuasicomboRunSubsystem::GetRun(this); Run &&
+        (!Run->HasRunStarted() || Run->GetOutcome() != EQuasicomboRunOutcome::Playing || Run->IsBossCombatLocked())) return false;
+    PreTrapMovementMode = GetCharacterMovement()->MovementMode;
+    PreTrapCustomMode = GetCharacterMovement()->CustomMovementMode;
+    PrepareForFinisher();
+    GetWorldTimerManager().ClearTimer(ChargedDashStrikeTimer);
+    GetWorldTimerManager().ClearTimer(WallJumpTimer);
+    bHasWallJumped = false;
+    ActionValueY = DropValue = 0;
+    UpdateMikeJumpTrailState(false);
+    FatalTrapSource = Source;
+    GetCharacterMovement()->DisableMovement();
+    return true;
+}
+
+void ASideScrollingCharacter::EndFatalTrap(AActor* Source)
+{
+    if (FatalTrapSource.Get() != Source) return;
+    FatalTrapSource.Reset();
+    if (CurrentHP > 0) GetCharacterMovement()->SetMovementMode(PreTrapMovementMode, PreTrapCustomMode);
 }

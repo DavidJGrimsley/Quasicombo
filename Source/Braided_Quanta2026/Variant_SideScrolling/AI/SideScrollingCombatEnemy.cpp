@@ -6,6 +6,7 @@
 #include "TimerManager.h"
 #include "Animation/AnimInstance.h"
 #include "SideScrollingCharacter.h"
+#include "QuasicomboRunSubsystem.h"
 
 ASideScrollingCombatEnemy::ASideScrollingCombatEnemy()
 {
@@ -20,10 +21,16 @@ ASideScrollingCombatEnemy::ASideScrollingCombatEnemy()
 void ASideScrollingCombatEnemy::BeginPlay()
 {
 	MaxHP = static_cast<float>(FMath::Max(1, RequiredHits));
+	Resistance = FMath::Clamp(Resistance, 0.0f, 1.0f);
 	Super::BeginPlay();
 	SpawnX = GetActorLocation().X;
 	GetCharacterMovement()->SetPlaneConstraintOrigin(GetActorLocation());
 	OnAttackCompleted.BindUObject(this, &ASideScrollingCombatEnemy::FinishSideAttack);
+}
+
+void ASideScrollingCombatEnemy::SetResistance(float NewResistance)
+{
+	Resistance = FMath::Clamp(NewResistance, 0.0f, 1.0f);
 }
 
 void ASideScrollingCombatEnemy::EndPlay(EEndPlayReason::Type EndPlayReason)
@@ -45,14 +52,24 @@ bool ASideScrollingCombatEnemy::HasFloorAhead(float Direction) const
 void ASideScrollingCombatEnemy::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-	if (CurrentHP <= 0 || IsCombatDefeated()) { CombatState = ESideCombatState::Dead; return; }
-	if (bSideAttackActive) return;
-	if ((CombatState == ESideCombatState::HitReaction || CombatState == ESideCombatState::Recovery) && GetWorld()->GetTimeSeconds() < StateEndsAt) return;
+	if (const auto* Run = UQuasicomboRunSubsystem::GetRun(this); Run && !Run->HasRunStarted()) return;
+	if (!CanProcessSideCombat() || !CanRunSideAI())
+		return;
+	if (CurrentHP <= 0 || IsCombatDefeated())
+	{
+		CombatState = ESideCombatState::Dead;
+		return;
+	}
+	if (bSideAttackActive)
+		return;
+	if ((CombatState == ESideCombatState::HitReaction || CombatState == ESideCombatState::Recovery) &&
+		GetWorld()->GetTimeSeconds() < StateEndsAt)
+		return;
 	AActor* Player = UGameplayStatics::GetPlayerPawn(this, 0);
 	if (!IsValid(Player)) { CombatState = ESideCombatState::Idle; return; }
 	const FVector ToPlayer = Player->GetActorLocation() - GetActorLocation();
 	const float DistanceX = FMath::Abs(ToPlayer.X);
-	if (FMath::Abs(ToPlayer.Z) > 180.0f || FMath::Abs(ToPlayer.Y) > 150.0f || DistanceX > AggroRange)
+	if (FMath::Abs(ToPlayer.Z) > AggroHeightTolerance || FMath::Abs(ToPlayer.Y) > AggroDepthTolerance || DistanceX > AggroRange)
 	{
 		CombatState = ESideCombatState::Idle;
 		return;
@@ -61,6 +78,12 @@ void ASideScrollingCombatEnemy::Tick(float DeltaSeconds)
 	SetActorRotation(FRotator(0, Direction >= 0 ? 0.0f : 180.0f, 0));
 	if (DistanceX <= AttackRange)
 	{
+		// Notice a player dropping in, but wait until melee can actually reach them.
+		if (FMath::Abs(ToPlayer.Z) > AttackHeightTolerance || FMath::Abs(ToPlayer.Y) > AttackDepthTolerance)
+		{
+			CombatState = ESideCombatState::Idle;
+			return;
+		}
 		if (GetWorld()->GetTimeSeconds() >= NextAttackTime)
 		{
 			NextAttackTime = GetWorld()->GetTimeSeconds() + AttackCooldown;
@@ -79,24 +102,37 @@ void ASideScrollingCombatEnemy::Tick(float DeltaSeconds)
 
 void ASideScrollingCombatEnemy::StartSideAttack()
 {
-	const bool bChargedAttack = ShouldUseChargedSideAttack() && ChargedAttackMontage;
+	const bool bChargedAttack = ShouldUseChargedSideAttack();
 	bSideAttackActive = true;
 	bAttackTraceFired = false;
 	CombatState = ESideCombatState::Attack;
-	const float StrikeDelay = bChargedAttack ? FMath::Max(AttackWindup, ChargedAttackWindup) : AttackWindup;
+	if (StartCustomSideAttack(bChargedAttack))
+	{
+		GetWorldTimerManager().SetTimer(AttackTimeoutTimer, this, &ASideScrollingCombatEnemy::TimeoutSideAttack, FMath::Max(0.1f, AttackTimeout), false);
+		return;
+	}
+	const bool bUseChargedMontage = bChargedAttack && ChargedAttackMontage;
+	const float StrikeDelay = bUseChargedMontage ? FMath::Max(AttackWindup, ChargedAttackWindup) : AttackWindup;
 	GetWorldTimerManager().SetTimer(AttackTraceFallbackTimer, this, &ASideScrollingCombatEnemy::FallbackAttackTrace, FMath::Max(0.01f, StrikeDelay), false);
 	GetWorldTimerManager().SetTimer(AttackTimeoutTimer, this, &ASideScrollingCombatEnemy::TimeoutSideAttack, FMath::Max(0.1f, AttackTimeout), false);
 
 	// The montage notify is the normal hit timing. A timed trace covers a missing
 	// notify or slot without ever causing a second hit in this attack.
-	if ((bChargedAttack ? ChargedAttackMontage : ComboAttackMontage) && GetMesh() && GetMesh()->GetAnimInstance())
+	if ((bUseChargedMontage ? ChargedAttackMontage : ComboAttackMontage) && GetMesh() && GetMesh()->GetAnimInstance())
 	{
 		bStartingSideAttack = true;
-		if (bChargedAttack) DoAIChargedAttack();
+		if (bUseChargedMontage) DoAIChargedAttack();
 		else
 		{
 			DoAIComboAttack();
 			TargetComboCount = 1;
+			// A side enemy performs one visible strike per attack, even when the
+			// source montage links its three combo sections by default.
+			if (bIsAttacking && ComboAttackMontage->GetNumSections() > 0)
+			{
+				GetMesh()->GetAnimInstance()->Montage_SetNextSection(
+					ComboAttackMontage->GetSectionName(0), NAME_None, ComboAttackMontage);
+			}
 		}
 		bStartingSideAttack = false;
 		if (bIsAttacking) return;
@@ -173,6 +209,7 @@ void ASideScrollingCombatEnemy::DoAttackTrace(FName DamageSourceBone)
 
 void ASideScrollingCombatEnemy::ApplyDamage(float Damage, AActor* DamageCauser, const FVector& DamageLocation, const FVector& DamageImpulse)
 {
+	if (!CanProcessSideCombat()) return;
 	if (Damage <= 0.0f || CurrentHP <= 0.0f || AcceptedStrikes >= RequiredHits || IsCombatDefeated()) return;
 	if (const ASideScrollingCharacter* Player = Cast<ASideScrollingCharacter>(DamageCauser))
 	{
@@ -181,16 +218,34 @@ void ASideScrollingCombatEnemy::ApplyDamage(float Damage, AActor* DamageCauser, 
 		LastStrikeCauser = DamageCauser;
 		LastAcceptedStrikeSerial = IncomingSerial;
 	}
-	bSideAttackActive = false;
-	GetWorldTimerManager().ClearTimer(AttackTraceFallbackTimer);
-	GetWorldTimerManager().ClearTimer(AttackTimeoutTimer);
-	if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+	const float ReactionScale = FMath::Clamp(GetStrikeReactionScale(), 0.0f, 1.0f);
+	if (ReactionScale > 0.001f)
 	{
-		AnimInstance->Montage_Stop(0.05f, ComboAttackMontage);
-		AnimInstance->Montage_Stop(0.05f, ChargedAttackMontage);
+		bSideAttackActive = false;
+		GetWorldTimerManager().ClearTimer(AttackTraceFallbackTimer);
+		GetWorldTimerManager().ClearTimer(AttackTimeoutTimer);
+		if (UAnimInstance *AnimInstance = GetMesh()->GetAnimInstance())
+		{
+			AnimInstance->Montage_Stop(0.05f, ComboAttackMontage);
+			AnimInstance->Montage_Stop(0.05f, ChargedAttackMontage);
+		}
+		bIsAttacking = false;
+		CombatState = ESideCombatState::HitReaction;
+		StateEndsAt = GetWorld()->GetTimeSeconds() + HitReactionDuration * ReactionScale;
 	}
-	bIsAttacking = false;
 	++AcceptedStrikes;
+	// Resistance changes only travel along the combat plane. Retain the
+	// original vertical launch and physics blend so the mesh stays grounded.
+	FVector KnockbackImpulse = DamageImpulse;
+	KnockbackImpulse.X *= 1.0f - GetResistance();
+	KnockbackImpulse.Y *= 1.0f - GetResistance();
+	ResolveAcceptedStrike(DamageCauser, DamageLocation, KnockbackImpulse);
+	OnAcceptedStrike(AcceptedStrikes, RequiredHits);
+	OnStrikeAccepted(AcceptedStrikes);
+}
+
+void ASideScrollingCombatEnemy::ResolveAcceptedStrike(AActor* DamageCauser, const FVector& DamageLocation, const FVector& DamageImpulse)
+{
 	if (AcceptedStrikes >= RequiredHits)
 	{
 		HandleRequiredHitsReached(DamageCauser, DamageLocation, DamageImpulse);
@@ -199,10 +254,40 @@ void ASideScrollingCombatEnemy::ApplyDamage(float Damage, AActor* DamageCauser, 
 	{
 		CombatState = ESideCombatState::HitReaction;
 		StateEndsAt = GetWorld()->GetTimeSeconds() + HitReactionDuration;
-		Super::ApplyDamage(1.0f, DamageCauser, DamageLocation, DamageImpulse);
+		ApplyAcceptedStrikeDamage(1.0f, DamageCauser, DamageLocation, DamageImpulse);
 	}
-	OnAcceptedStrike(AcceptedStrikes, RequiredHits);
-	OnStrikeAccepted(AcceptedStrikes);
+}
+
+void ASideScrollingCombatEnemy::ApplyAcceptedStrikeDamage(float Damage, AActor* DamageCauser,
+	const FVector& DamageLocation, const FVector& DamageImpulse)
+{
+	ACombatEnemy::ApplyDamage(Damage, DamageCauser, DamageLocation, DamageImpulse);
+}
+
+void ASideScrollingCombatEnemy::SuspendSideCombat()
+{
+	bSideAttackActive = false;
+	bIsAttacking = false;
+	bAttackTraceFired = true;
+	GetWorldTimerManager().ClearTimer(AttackTraceFallbackTimer);
+	GetWorldTimerManager().ClearTimer(AttackTimeoutTimer);
+	if (UAnimInstance* Anim = GetMesh()->GetAnimInstance()) Anim->StopAllMontages(0.1f);
+	GetCharacterMovement()->StopMovementImmediately();
+}
+
+void ASideScrollingCombatEnemy::ResetSideCombat(int32 Hits)
+{
+	SuspendSideCombat();
+	RequiredHits = FMath::Max(1, Hits);
+	MaxHP = CurrentHP = static_cast<float>(RequiredHits);
+	AcceptedStrikes = 0;
+	LastStrikeCauser.Reset();
+	LastAcceptedStrikeSerial = -1;
+	SpawnX = GetActorLocation().X;
+	NextAttackTime = GetWorld()->GetTimeSeconds() + 1.0f;
+	StateEndsAt = NextAttackTime;
+	CombatState = ESideCombatState::Recovery;
+	GetCharacterMovement()->SetMovementMode(MOVE_Walking);
 }
 
 void ASideScrollingCombatEnemy::HandleRequiredHitsReached(AActor* DamageCauser, const FVector& DamageLocation, const FVector& DamageImpulse)

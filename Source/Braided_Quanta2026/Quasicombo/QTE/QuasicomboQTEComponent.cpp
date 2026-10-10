@@ -1,117 +1,97 @@
 #include "QuasicomboQTEComponent.h"
 #include "QuasicomboRunSubsystem.h"
 #include "QuasicomboBoss.h"
+#include "QuasicomboQTEDirector.h"
 #include "Engine/World.h"
 
 UQuasicomboQTEComponent::UQuasicomboQTEComponent()
 {
-	PrimaryComponentTick.bCanEverTick = true;
-	PrimaryComponentTick.bTickEvenWhenPaused = true;
+    PrimaryComponentTick.bCanEverTick=true; PrimaryComponentTick.bTickEvenWhenPaused=true;
 }
-
 void UQuasicomboQTEComponent::BeginPlay()
 {
-	Super::BeginPlay();
-	if (UQuasicomboRunSubsystem* Run = GetWorld()->GetSubsystem<UQuasicomboRunSubsystem>())
-	{
-		Run->OnRunEnded.AddDynamic(this, &UQuasicomboQTEComponent::HandleRunEnded);
-	}
+    Super::BeginPlay();
+    if(auto* Run=GetWorld()->GetSubsystem<UQuasicomboRunSubsystem>())
+        Run->OnRunEnded.AddDynamic(this,&UQuasicomboQTEComponent::HandleRunEnded);
 }
-
-void UQuasicomboQTEComponent::BeginQTE(bool bTauOutcome)
+void UQuasicomboQTEComponent::BeginQTE(bool bTau,int32 Rounds) { BeginRound(bTau,1,Rounds,3); }
+void UQuasicomboQTEComponent::BeginRound(bool bTau,int32 Round,int32 Rounds,int32 Count)
 {
-	if (IsQTEActive() || !GetWorld()) return;
-	const UQuasicomboRunSubsystem* Run = GetWorld()->GetSubsystem<UQuasicomboRunSubsystem>();
-	if (!Run || Run->GetOutcome() != EQuasicomboRunOutcome::Playing) return;
-	bResultDelivered = false;
-	Sequence.Begin(bTauOutcome, FPlatformTime::Seconds(), PromptWindowSeconds);
-	OnPromptChanged.Broadcast(GetExpectedInput(), 1);
+    if(bOwningInput||!GetWorld()) return;
+    const auto* Run=GetWorld()->GetSubsystem<UQuasicomboRunSubsystem>();
+    if(!Run||Run->GetOutcome()!=EQuasicomboRunOutcome::Playing) return;
+    bResultDelivered=bActionInProgress=bFinishingBeat=false; bOwningInput=true;
+    FailedInput=EQuasicomboQTEInput::Invalid;
+    Sequence.Begin(bTau,FPlatformTime::Seconds(),PromptWindowSeconds,Rounds,Count,Round);
+    OnPromptChanged.Broadcast(GetExpectedInput(),1);
 }
-
-EQuasicomboQTEInput UQuasicomboQTEComponent::GetExpectedInput() const
-{
-	return Sequence.GetExpectedInput();
-}
-
 float UQuasicomboQTEComponent::GetSecondsRemaining() const
 {
-	return static_cast<float>(Sequence.GetSecondsRemaining(FPlatformTime::Seconds(), GetWorld() && GetWorld()->IsPaused()));
+    return float(Sequence.GetSecondsRemaining(FPlatformTime::Seconds(),GetWorld()&&GetWorld()->IsPaused()));
 }
-
-bool UQuasicomboQTEComponent::SubmitPrompt(EQuasicomboQTEInput Input)
+float UQuasicomboQTEComponent::GetChargeProgress() const
 {
-	if (bFinishingBeat) return true;
-	if (!Sequence.IsActive()) return false;
-	const EQuasicomboQTEProgress Result = Sequence.Submit(Input, FPlatformTime::Seconds(), GetWorld() && GetWorld()->IsPaused());
-	if (Result == EQuasicomboQTEProgress::Failed) Finish(false);
-	else if (Result == EQuasicomboQTEProgress::Succeeded)
-	{
-		bFinishingBeat = true;
-		LastSuccessBeatClockSample = FPlatformTime::Seconds();
-		SuccessBeatDeadline = LastSuccessBeatClockSample + FMath::Max(0.0f, SuccessBeatSeconds);
-		if (AQuasicomboBoss* Boss = Cast<AQuasicomboBoss>(GetOwner())) Boss->ShowImpactCamera();
-		OnFinishingBeat.Broadcast();
-		if (SuccessBeatSeconds <= 0.0f) Finish(true);
-	}
-	else if (Result == EQuasicomboQTEProgress::Advanced)
-	{
-		OnPromptChanged.Broadcast(GetExpectedInput(), GetPromptNumber());
-		if (AQuasicomboBoss* Boss = Cast<AQuasicomboBoss>(GetOwner())) Boss->ShowImpactCamera();
-	}
-	return true;
+    return float(Sequence.GetChargeSeconds(FPlatformTime::Seconds(),GetWorld()&&GetWorld()->IsPaused()));
 }
-
-void UQuasicomboQTEComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+bool UQuasicomboQTEComponent::SubmitPrompt(EQuasicomboQTEInput Input) { return SubmitEdge(Input,EQuasicomboQTEInputEdge::Press); }
+bool UQuasicomboQTEComponent::SubmitEdge(EQuasicomboQTEInput Input,EQuasicomboQTEInputEdge Edge)
 {
-	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-	const double Now = FPlatformTime::Seconds();
-	const bool bPaused = GetWorld() && GetWorld()->IsPaused();
-	if (Sequence.IsActive() && Sequence.Advance(Now, bPaused) == EQuasicomboQTEProgress::Failed)
-	{
-		Finish(false);
-	}
-	if (bFinishingBeat)
-	{
-		if (bPaused) SuccessBeatDeadline += FMath::Max(0.0, Now - LastSuccessBeatClockSample);
-		LastSuccessBeatClockSample = Now;
-		if (!bPaused && Now >= SuccessBeatDeadline) Finish(true);
-	}
+    if(!bOwningInput) return false;
+    if(bResultDelivered||bActionInProgress||bFinishingBeat) return true;
+    const int32 Beat=Sequence.GetPromptNumber();
+    const auto Expected=Sequence.GetExpectedInput();
+    const auto Result=Sequence.Submit(Input,FPlatformTime::Seconds(),GetWorld()->IsPaused(),Edge);
+    if(Result==EQuasicomboQTEProgress::Failed) { FailedInput=Expected; Finish(false); }
+    else if(Result==EQuasicomboQTEProgress::Charging) OnPromptAccepted.Broadcast(Beat,true);
+    else if(Result==EQuasicomboQTEProgress::Advanced||Result==EQuasicomboQTEProgress::Succeeded)
+    {
+        bActionInProgress=true;
+        bFinishingBeat=Result==EQuasicomboQTEProgress::Succeeded;
+        Sequence.Hold(FPlatformTime::Seconds());
+        if(Edge==EQuasicomboQTEInputEdge::Release) OnChargeReleased.Broadcast();
+        else OnPromptAccepted.Broadcast(Beat,false);
+        if(bFinishingBeat) OnFinishingBeat.Broadcast();
+        if(!Cast<AQuasicomboQTEDirector>(GetOwner())) CompleteAction();
+    }
+    return true;
 }
-
+void UQuasicomboQTEComponent::CompleteAction()
+{
+    if(bResultDelivered||!bActionInProgress) return;
+    bActionInProgress=false;
+    if(bFinishingBeat) { Finish(true); return; }
+    Sequence.OpenNextPrompt(FPlatformTime::Seconds());
+    OnPromptChanged.Broadcast(GetExpectedInput(),GetPromptNumber());
+}
+void UQuasicomboQTEComponent::TickComponent(float DeltaTime,ELevelTick TickType,FActorComponentTickFunction* Tick)
+{
+    Super::TickComponent(DeltaTime,TickType,Tick);
+    const auto Expected=Sequence.GetExpectedInput();
+    if(Sequence.Advance(FPlatformTime::Seconds(),GetWorld()&&GetWorld()->IsPaused())==EQuasicomboQTEProgress::Failed)
+    { FailedInput=Expected; Finish(false); }
+}
 void UQuasicomboQTEComponent::Finish(bool bSucceeded)
 {
-	if (bResultDelivered) return;
-	bResultDelivered = true;
-	Sequence.Cancel();
-	bFinishingBeat = false;
-	UQuasicomboRunSubsystem* Run = GetWorld() ? GetWorld()->GetSubsystem<UQuasicomboRunSubsystem>() : nullptr;
-	if (AQuasicomboBoss* Boss = Cast<AQuasicomboBoss>(GetOwner())) Boss->RestoreCameraAndTime();
-	OnQTEFinished.Broadcast(bSucceeded);
-	if (Run) Run->EndRun(bSucceeded ? EQuasicomboRunOutcome::Victory : EQuasicomboRunOutcome::Defeat);
+    if(bResultDelivered) return;
+    bResultDelivered=true; Sequence.Cancel(); bActionInProgress=bFinishingBeat=false;
+    OnQTEFinished.Broadcast(bSucceeded);
+    if(Cast<AQuasicomboQTEDirector>(GetOwner())) return; // Director keeps input through the outro.
+    bOwningInput=false;
+    if(auto* Boss=Cast<AQuasicomboBoss>(GetOwner())) { Boss->RestoreCameraAndTime(); Boss->HandleQTEResult(bSucceeded); }
 }
-
+void UQuasicomboQTEComponent::CancelQTE()
+{
+    Sequence.Cancel(); bOwningInput=bActionInProgress=bFinishingBeat=false; bResultDelivered=true;
+    FailedInput=EQuasicomboQTEInput::Invalid;
+}
 void UQuasicomboQTEComponent::HandleRunEnded(EQuasicomboRunOutcome)
 {
-	if (!IsQTEActive() || bResultDelivered) return;
-	bResultDelivered = true;
-	Sequence.Cancel();
-	bFinishingBeat = false;
-	if (AQuasicomboBoss* Boss = Cast<AQuasicomboBoss>(GetOwner())) Boss->RestoreCameraAndTime();
-	OnQTEFinished.Broadcast(false);
+    const bool bNotify=bOwningInput&&!bResultDelivered;
+    CancelQTE(); if(bNotify) OnQTEFinished.Broadcast(false);
 }
-
-void UQuasicomboQTEComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+void UQuasicomboQTEComponent::EndPlay(const EEndPlayReason::Type Reason)
 {
-	if (UWorld* World = GetWorld())
-	{
-		if (UQuasicomboRunSubsystem* Run = World->GetSubsystem<UQuasicomboRunSubsystem>())
-		{
-			Run->OnRunEnded.RemoveDynamic(this, &UQuasicomboQTEComponent::HandleRunEnded);
-		}
-	}
-	Sequence.Cancel();
-	bFinishingBeat = false;
-	bResultDelivered = true;
-	if (AQuasicomboBoss* Boss = Cast<AQuasicomboBoss>(GetOwner())) Boss->RestoreCameraAndTime();
-	Super::EndPlay(EndPlayReason);
+    if(GetWorld()) if(auto* Run=GetWorld()->GetSubsystem<UQuasicomboRunSubsystem>())
+        Run->OnRunEnded.RemoveDynamic(this,&UQuasicomboQTEComponent::HandleRunEnded);
+    CancelQTE(); Super::EndPlay(Reason);
 }

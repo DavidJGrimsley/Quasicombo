@@ -56,6 +56,20 @@ Content/AssetPacks
 # Keep the public repository source-only
 Content/
 .diversion/
-Project/
 Build/
 *.zip
+
+# Generated artifacts and credential overrides
+__pycache__/
+*.pyc
+*.log
+*.uasset
+*.umap
+*.glb
+*.fbx
+*.blend
+*.blend1
+*.mp3
+*.wav
+*.ogg
+Config/DefaultQuantumApi.local.ini

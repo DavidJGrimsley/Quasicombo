@@ -33,6 +33,11 @@ protected:
 	/** Runtime-only mappings for the imported dash and combat actions */
 	UPROPERTY(Transient)
 	TObjectPtr<UInputMappingContext> GameplayExtensionsMappingContext;
+    UPROPERTY(Transient) TObjectPtr<UInputAction> BusterFireAction;
+    void HandleBusterRelease();
+    void HandleBusterCancel();
+    virtual void PlayerTick(float DeltaTime) override;
+    void HandleBusterFire();
 
 	/** Mobile controls widget to spawn */
 	UPROPERTY(EditAnywhere, Category="Input|Touch Controls")
