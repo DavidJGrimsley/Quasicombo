@@ -699,7 +699,9 @@ FQuantumApiTransportRequest FQuantumApiClient::BuildTransportRequest(const FStri
     Request.Url = BaseUrl + Path;
     Request.Verb = Verb;
     Request.Body = Body;
-    Request.TimeoutSeconds = RequestTimeoutSeconds;
+    Request.TimeoutSeconds = FMath::IsFinite(Options.TimeoutSecondsOverride) && Options.TimeoutSecondsOverride > 0.0f
+                                 ? Options.TimeoutSecondsOverride
+                                 : RequestTimeoutSeconds;
     Request.Headers.Add(TEXT("Accept"), TEXT("application/json"));
     Request.Headers.Add(TEXT("Content-Type"), TEXT("application/json"));
 

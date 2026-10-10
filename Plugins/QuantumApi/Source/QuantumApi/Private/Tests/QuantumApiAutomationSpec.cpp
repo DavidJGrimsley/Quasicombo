@@ -101,10 +101,20 @@ bool FQuantumApiTransportSpec::RunTest(const FString& Parameters)
     FQuantumApiClient ProxyClient(MakeSettings(EQuantumApiAuthMode::BackendProxy), ProxyMock);
     ProxyClient.HealthCheck(FQuantumApiRequestOptions(), FQuantumApiHealthDelegate(), FQuantumApiErrorDelegate());
     TestFalse(TEXT("Proxy mode omits direct API key"), ProxyMock->Requests[0].Headers.Contains(TEXT("X-API-Key")));
-    TestEqual(TEXT("Proxy mode uses the configured proxy URL"), ProxyMock->Requests[0].Url, FString(TEXT("https://proxy.example.test/quantum/v1/health")));
+    TestEqual(TEXT("Proxy mode uses the configured proxy URL"), ProxyMock->Requests[0].Url,
+              FString(TEXT("https://proxy.example.test/quantum/v1/health")));
+
+    const TSharedRef<FQuantumApiMockTransport> TimeoutMock = MakeShared<FQuantumApiMockTransport>();
+    FQuantumApiClient TimeoutClient(MakeSettings(EQuantumApiAuthMode::DirectApiKey), TimeoutMock);
+    FQuantumApiRequestOptions Fast;
+    Fast.TimeoutSecondsOverride = 2.0f;
+    TimeoutClient.RunGate(GateRequest, Fast, FQuantumApiRunGateDelegate(), FQuantumApiErrorDelegate());
+    TimeoutClient.RunGate(GateRequest, FQuantumApiRequestOptions(), FQuantumApiRunGateDelegate(), FQuantumApiErrorDelegate());
+    TestEqual(TEXT("Per-request timeout reaches transport"), TimeoutMock->Requests[0].TimeoutSeconds, 2.0f);
+    TestEqual(TEXT("Override does not change subsequent requests"), TimeoutMock->Requests[1].TimeoutSeconds, 10.0f);
 
     const TSharedRef<FQuantumApiMockTransport> MissingDirectKeyMock = MakeShared<FQuantumApiMockTransport>();
-    UQuantumApiSettings* MissingDirectKeySettings = MakeSettings(EQuantumApiAuthMode::DirectApiKey);
+    UQuantumApiSettings *MissingDirectKeySettings = MakeSettings(EQuantumApiAuthMode::DirectApiKey);
     MissingDirectKeySettings->ApiKey.Empty();
     FQuantumApiClient MissingDirectKeyClient(MissingDirectKeySettings, MissingDirectKeyMock);
     FQuantumApiError MissingDirectKeyError;
@@ -156,6 +166,9 @@ bool FQuantumApiTransportSpec::RunTest(const FString& Parameters)
     TestEqual(TEXT("Invalid QRNG bounds do not make a request"), BoundsMock->Requests.Num(), 0);
 
     const TSharedRef<FQuantumApiMockTransport> BackendMock = MakeShared<FQuantumApiMockTransport>();
+    // This assertion checks URL serialization; finish the GET synchronously so
+    // no retry outlives the stack-owned test client.
+    BackendMock->QueuedResponses.Add(ProxyResponse);
     FQuantumApiClient BackendClient(MakeSettings(EQuantumApiAuthMode::DirectApiKey), BackendMock);
     FQuantumApiBackendListRequest BackendRequest;
     BackendRequest.Provider = TEXT("ibm");

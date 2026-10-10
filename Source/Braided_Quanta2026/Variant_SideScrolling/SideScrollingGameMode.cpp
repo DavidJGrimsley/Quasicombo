@@ -9,10 +9,73 @@
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/PlayerStart.h"
 #include "Engine/World.h"
+#include "Engine/GameInstance.h"
+#include "Components/AudioComponent.h"
+#include "Sound/SoundWave.h"
+#include "QuasicomboMusicComponent.h"
+#include "QuasicomboLoadoutSubsystem.h"
+#include "QuasicomboRunSubsystem.h"
+
+bool ASideScrollingGameMode::ShouldShowFrontend() const
+{
+	const auto* Loadout = UQuasicomboLoadoutSubsystem::GetLoadout(const_cast<ASideScrollingGameMode*>(this));
+	const UGameInstance* Instance = GetGameInstance();
+	return FrontendDirectorClass && Loadout && Instance && Instance->GetFirstGamePlayer() && !Loadout->HasStartedSession();
+}
+
+void ASideScrollingGameMode::StartGameplay()
+{
+	if (auto* Run = UQuasicomboRunSubsystem::GetRun(this)) Run->StartRun();
+	StartBackgroundMusic();
+}
+
+void ASideScrollingGameMode::HandleAudioSettingsChanged()
+{
+	const auto* Loadout = UQuasicomboLoadoutSubsystem::GetLoadout(this);
+	if (ForestAmbienceComponent) ForestAmbienceComponent->SetVolumeMultiplier(ForestAmbienceVolume * (Loadout ? Loadout->GetUserAmbienceVolume() : 1.0f));
+}
+
+void ASideScrollingGameMode::EndPlay(EEndPlayReason::Type Reason)
+{
+	if (auto* Loadout = UQuasicomboLoadoutSubsystem::GetLoadout(this)) Loadout->OnAudioSettingsChanged.RemoveDynamic(this, &ASideScrollingGameMode::HandleAudioSettingsChanged);
+	GetWorldTimerManager().ClearTimer(BackgroundMusicStartTimerHandle);
+	Super::EndPlay(Reason);
+}
+
+ASideScrollingGameMode::ASideScrollingGameMode()
+{
+	MusicController = CreateDefaultSubobject<UQuasicomboMusicComponent>(TEXT("MusicController"));
+}
 
 void ASideScrollingGameMode::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// The forest remains live during the frontend; the director starts route music.
+	const bool bFrontend = ShouldShowFrontend();
+	if (auto* Loadout = UQuasicomboLoadoutSubsystem::GetLoadout(this)) Loadout->OnAudioSettingsChanged.AddUniqueDynamic(this, &ASideScrollingGameMode::HandleAudioSettingsChanged);
+	if (USoundWave* ForestAmbience = LoadObject<USoundWave>(nullptr, TEXT("/Game/Audio/forest_loop.forest_loop")))
+	{
+		// Audio keeps real time while gameplay timers slow during cinematics or stalls.
+		// Loop on the audio device so the forest never waits for a gameplay restart timer.
+		ForestAmbience->bLooping = true;
+		ForestAmbienceComponent = UGameplayStatics::SpawnSound2D(GetWorld(), ForestAmbience, ForestAmbienceVolume, 1.0f, 0.0f, nullptr, false, false);
+
+		if (ForestAmbienceComponent)
+		{
+			constexpr float ForestIntroFadeDuration = 3.0f;
+			ForestAmbienceComponent->FadeIn(ForestIntroFadeDuration, 1.0f);
+			if (!bFrontend) GetWorld()->GetTimerManager().SetTimer(
+				BackgroundMusicStartTimerHandle,
+				this,
+				&ASideScrollingGameMode::StartBackgroundMusic,
+				ForestIntroFadeDuration,
+				false);
+		}
+	}
+	HandleAudioSettingsChanged();
+	if (!bFrontend && !GetWorld()->GetTimerManager().IsTimerActive(BackgroundMusicStartTimerHandle))
+		StartBackgroundMusic();
 
 	// create the game UI
 	APlayerController* OwningPlayer = UGameplayStatics::GetPlayerController(GetWorld(), 0);
@@ -25,6 +88,16 @@ void ASideScrollingGameMode::BeginPlay()
 	{
 		UGameplayStatics::CreatePlayer(GetWorld(), -1, true);
 	}
+	if (bFrontend && !GetWorld()->SpawnActor<AActor>(FrontendDirectorClass))
+	{
+		UE_LOG(LogTemp, Error, TEXT("Quasicombo frontend could not spawn; starting gameplay."));
+		StartGameplay();
+	}
+}
+
+void ASideScrollingGameMode::StartBackgroundMusic()
+{
+	MusicController->StartLevelMusic(BackgroundMusicVolume);
 }
 
 AActor* ASideScrollingGameMode::ChoosePlayerStart_Implementation(AController* Player)

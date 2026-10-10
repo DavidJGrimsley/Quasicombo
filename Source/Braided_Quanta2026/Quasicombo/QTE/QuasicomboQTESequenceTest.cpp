@@ -1,98 +1,101 @@
 #if WITH_DEV_AUTOMATION_TESTS
-
 #include "QuasicomboQTESequence.h"
 #include "QuasicomboQTEComponent.h"
+#include "QuasicomboQTERules.h"
 #include "Misc/AutomationTest.h"
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FQuasicomboQTESequenceTest,
-	"Quasicombo.QTE.PromptSequence",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-bool FQuasicomboQTESequenceTest::RunTest(const FString& Parameters)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FQuasicomboQTESequenceTest,"Quasicombo.QTE.PromptSequence",EAutomationTestFlags::EditorContext|EAutomationTestFlags::ProductFilter)
+bool FQuasicomboQTESequenceTest::RunTest(const FString&)
 {
-	const float BlockoutWindow = GetDefault<UQuasicomboQTEComponent>()->PromptWindowSeconds;
-	TestEqual(TEXT("Playable blockout allows four seconds per prompt"), BlockoutWindow, 4.0f);
-	FQuasicomboQTESequence Easy;
-	Easy.Begin(false, 0.0, BlockoutWindow);
-	TestEqual(TEXT("Easy prompt is still open just before four seconds"), Easy.Advance(3.9, false),
-		EQuasicomboQTEProgress::None);
-	TestEqual(TEXT("A late but valid press advances and gets a fresh window"), Easy.Submit(EQuasicomboQTEInput::Attack, 3.95, false),
-		EQuasicomboQTEProgress::Advanced);
-	TestTrue(TEXT("Second prompt has its own four-second window"), Easy.GetSecondsRemaining(7.9, false) > 0.0);
-
-	FQuasicomboQTESequence Vacuum;
-	Vacuum.Begin(false, 100.0, 0.9);
-	TestEqual(TEXT("Vacuum first input is Attack"), Vacuum.GetExpectedInput(), EQuasicomboQTEInput::Attack);
-	TestEqual(TEXT("First fresh press advances"), Vacuum.Submit(EQuasicomboQTEInput::Attack, 100.2, false),
-		EQuasicomboQTEProgress::Advanced);
-	TestEqual(TEXT("Vacuum second input is Dash"), Vacuum.GetExpectedInput(), EQuasicomboQTEInput::Dash);
-	TestEqual(TEXT("Second fresh press advances"), Vacuum.Submit(EQuasicomboQTEInput::Dash, 100.5, false),
-		EQuasicomboQTEProgress::Advanced);
-	TestEqual(TEXT("Vacuum final input is Attack"), Vacuum.GetExpectedInput(), EQuasicomboQTEInput::Attack);
-	TestEqual(TEXT("Three correct presses succeed"), Vacuum.Submit(EQuasicomboQTEInput::Attack, 101.1, false),
-		EQuasicomboQTEProgress::Succeeded);
-	TestFalse(TEXT("Success ends input ownership"), Vacuum.IsActive());
-	TestEqual(TEXT("A fourth press cannot retrigger success"), Vacuum.Submit(EQuasicomboQTEInput::Attack, 101.2, false),
-		EQuasicomboQTEProgress::None);
-
-	FQuasicomboQTESequence Tau;
-	Tau.Begin(true, 200.0, 0.9);
-	TestEqual(TEXT("Tau first input is Dash"), Tau.GetExpectedInput(), EQuasicomboQTEInput::Dash);
-	TestEqual(TEXT("Wrong input fails immediately"), Tau.Submit(EQuasicomboQTEInput::Attack, 200.1, false),
-		EQuasicomboQTEProgress::Failed);
-	TestFalse(TEXT("Failure ends input ownership"), Tau.IsActive());
-	Tau.Begin(true, 210.0, 0.9);
-	TestEqual(TEXT("Tau Dash advances"), Tau.Submit(EQuasicomboQTEInput::Dash, 210.1, false),
-		EQuasicomboQTEProgress::Advanced);
-	TestEqual(TEXT("Tau second input is Jump"), Tau.GetExpectedInput(), EQuasicomboQTEInput::Jump);
-	TestEqual(TEXT("Tau Jump advances"), Tau.Submit(EQuasicomboQTEInput::Jump, 210.2, false),
-		EQuasicomboQTEProgress::Advanced);
-	TestEqual(TEXT("Tau final input is Attack"), Tau.GetExpectedInput(), EQuasicomboQTEInput::Attack);
-	TestEqual(TEXT("Tau pattern succeeds"), Tau.Submit(EQuasicomboQTEInput::Attack, 210.3, false),
-		EQuasicomboQTEProgress::Succeeded);
-
-	FQuasicomboQTESequence Timeout;
-	Timeout.Begin(false, 300.0, 0.9);
-	TestEqual(TEXT("Prompt survives before deadline"), Timeout.Advance(300.89, false), EQuasicomboQTEProgress::None);
-	TestEqual(TEXT("Prompt fails after deadline"), Timeout.Advance(300.91, false), EQuasicomboQTEProgress::Failed);
-	Timeout.Begin(false, 310.0, 0.9);
-	TestEqual(TEXT("Late correct input still fails"), Timeout.Submit(EQuasicomboQTEInput::Attack, 310.91, false),
-		EQuasicomboQTEProgress::Failed);
-
-	FQuasicomboQTESequence Paused;
-	Paused.Begin(false, 400.0, 0.9);
-	Paused.Advance(400.3, false);
-	TestEqual(TEXT("Paused input is consumed without advancing"), Paused.Submit(EQuasicomboQTEInput::Attack, 420.3, true),
-		EQuasicomboQTEProgress::None);
-	TestTrue(TEXT("Pause preserves prompt"), Paused.IsActive());
-	TestTrue(TEXT("Pause preserves remaining time"),
-		FMath::IsNearlyEqual(Paused.GetSecondsRemaining(420.3, true), 0.6, 1e-9));
-	TestEqual(TEXT("After unpause remaining time advances normally"), Paused.Advance(420.89, false),
-		EQuasicomboQTEProgress::None);
-	TestEqual(TEXT("After unpause deadline still applies"), Paused.Advance(420.91, false),
-		EQuasicomboQTEProgress::Failed);
-	return true;
+    TestEqual(TEXT("Real-time prompt window"),GetDefault<UQuasicomboQTEComponent>()->PromptWindowSeconds,1.5f);
+    for(bool bTau : {false,true}) for(int32 Count=2;Count<=6;++Count)
+    {
+        FQuasicomboQTESequence S; S.Begin(bTau,100,1.5,3,Count,2);
+        for(int32 Beat=1;Beat<=Count;++Beat)
+        {
+            const double Now=100+Beat*.1;
+            TestEqual(TEXT("One-based beat"),S.GetPromptNumber(),Beat);
+            TestEqual(TEXT("One round per combat depletion"),S.GetRoundNumber(),2);
+            if(Beat==1) TestEqual(TEXT("First input is jump in both families"),S.GetExpectedInput(),EQuasicomboQTEInput::Jump);
+            if(Beat==2) TestEqual(TEXT("Second input is the uppercut attack"),S.GetExpectedInput(),EQuasicomboQTEInput::Attack);
+            if(Beat==3) TestEqual(TEXT("Chomp always uses Y"),S.GetExpectedInput(),EQuasicomboQTEInput::Chomp);
+            if(Beat==4) TestEqual(TEXT("Claw always uses RT"),S.GetExpectedInput(),EQuasicomboQTEInput::Claw);
+            if(Beat==5) TestEqual(TEXT("Final uppercut uses B"),S.GetExpectedInput(),EQuasicomboQTEInput::Attack);
+            if(Beat==6)
+            {
+                TestEqual(TEXT("Cannon starts holding"),S.Submit(EQuasicomboQTEInput::Fire,Now,false),EQuasicomboQTEProgress::Charging);
+                TestEqual(TEXT("Repeated fire adds no beat"),S.Submit(EQuasicomboQTEInput::Fire,Now+.3,false),EQuasicomboQTEProgress::None);
+                TestEqual(TEXT("Charged release completes"),S.Submit(EQuasicomboQTEInput::Fire,Now+1.1,false,EQuasicomboQTEInputEdge::Release),EQuasicomboQTEProgress::Succeeded);
+            }
+            else TestEqual(TEXT("Selected prefix ends on its last move"),S.Submit(S.GetExpectedInput(),Now,false),
+                Beat==Count?EQuasicomboQTEProgress::Succeeded:EQuasicomboQTEProgress::Advanced);
+        }
+        TestFalse(TEXT("No automatic extra move"),S.IsActive());
+    }
+    FQuasicomboQTESequence S; S.Begin(false,0,1.5);
+    TestEqual(TEXT("Attack before takeoff fails"),S.Submit(EQuasicomboQTEInput::Attack,.1,false),EQuasicomboQTEProgress::Failed);
+    S.Begin(false,0,1.5); S.Hold(.1);
+    TestEqual(TEXT("Animation hold protects deadline"),S.Advance(10,false),EQuasicomboQTEProgress::None);
+    TestEqual(TEXT("Mashing during action cannot advance"),S.Submit(EQuasicomboQTEInput::Attack,10.1,false),EQuasicomboQTEProgress::None);
+    S.OpenNextPrompt(11);
+    TestEqual(TEXT("Transition opens a full new window"),S.GetSecondsRemaining(11,false),1.5);
+    TestEqual(TEXT("Prompt timeout"),S.Advance(12.51,false),EQuasicomboQTEProgress::Failed);
+    S.Begin(false,0,1.5); S.Advance(.3,false); S.Advance(20.3,true);
+    TestTrue(TEXT("Pause retains remaining window"),FMath::IsNearlyEqual(S.GetSecondsRemaining(20.3,true),1.2,1e-9));
+    TestEqual(TEXT("Resume timeout"),S.Advance(21.51,false),EQuasicomboQTEProgress::Failed);
+    return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FQuasicomboQTEInterruptionTest,
-	"Quasicombo.QTE.Interruption",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-bool FQuasicomboQTEInterruptionTest::RunTest(const FString& Parameters)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FQuasicomboQTERulesTest,"Quasicombo.QTE.ProgressiveRounds",EAutomationTestFlags::EditorContext|EAutomationTestFlags::ProductFilter)
+bool FQuasicomboQTERulesTest::RunTest(const FString&)
 {
-	UQuasicomboQTEComponent* Component = NewObject<UQuasicomboQTEComponent>();
-	Component->Sequence.Begin(false, 100.0, 0.9);
-	TestTrue(TEXT("Prompt owns input before external defeat"), Component->IsQTEActive());
-	Component->HandleRunEnded(EQuasicomboRunOutcome::Defeat);
-	TestFalse(TEXT("External defeat cancels prompt immediately"), Component->IsQTEActive());
-	TestTrue(TEXT("Interruption marks result delivered"), Component->bResultDelivered);
-	TestFalse(TEXT("No later prompt can deliver victory"), Component->SubmitPrompt(EQuasicomboQTEInput::Attack));
-	Component->bResultDelivered = false;
-	Component->bFinishingBeat = true;
-	Component->HandleRunEnded(EQuasicomboRunOutcome::Defeat);
-	TestFalse(TEXT("External defeat also cancels finishing beat"), Component->IsQTEActive());
-	TestTrue(TEXT("Finishing beat cannot later deliver victory"), Component->bResultDelivered);
-	return true;
+    TestEqual(TEXT("Vacuum minimum"),QuasicomboQTERules::FinalPromptCount(0,false),2);
+    TestEqual(TEXT("No cannon maximum"),QuasicomboQTERules::FinalPromptCount(1,false),5);
+    TestEqual(TEXT("Cannon maximum"),QuasicomboQTERules::FinalPromptCount(1,true),6);
+    TestEqual(TEXT("Balanced without cannon"),QuasicomboQTERules::FinalPromptCount(.5,false),4);
+    for(int32 Final=2;Final<=6;++Final) for(int32 Rounds=1;Rounds<=3;++Rounds)
+        for(int32 Round=1;Round<=Rounds;++Round)
+            TestEqual(TEXT("Progressive round length"),QuasicomboQTERules::RoundPromptCount(Final,Round,Rounds),FMath::Max(2,Final-(Rounds-Round)));
+    return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FQuasicomboQTEChargeTest,"Quasicombo.QTE.ChargeBoundaries",EAutomationTestFlags::EditorContext|EAutomationTestFlags::ProductFilter)
+bool FQuasicomboQTEChargeTest::RunTest(const FString&)
+{
+    auto Cannon=[]()
+    {
+        FQuasicomboQTESequence S; S.Begin(false,100,1.5,1,6);
+        for(int32 I=0;I<5;++I) S.Submit(S.GetExpectedInput(),100+I*.1,false);
+        return S;
+    };
+    auto S=Cannon();
+    TestEqual(TEXT("Must begin hold before 1.5 seconds"),S.Submit(EQuasicomboQTEInput::Fire,101.901,false),EQuasicomboQTEProgress::Failed);
+    S=Cannon(); S.Submit(EQuasicomboQTEInput::Fire,100.5,false);
+    TestEqual(TEXT("Early release fails"),S.Submit(EQuasicomboQTEInput::Fire,101.499,false,EQuasicomboQTEInputEdge::Release),EQuasicomboQTEProgress::Failed);
+    S=Cannon(); S.Submit(EQuasicomboQTEInput::Fire,100.5,false);
+    TestEqual(TEXT("Exact one-second release succeeds"),S.Submit(EQuasicomboQTEInput::Fire,101.5,false,EQuasicomboQTEInputEdge::Release),EQuasicomboQTEProgress::Succeeded);
+    S=Cannon(); S.Submit(EQuasicomboQTEInput::Fire,100.5,false);
+    TestEqual(TEXT("The extended release window accepts a later release"),S.Submit(EQuasicomboQTEInput::Fire,102.6,false,EQuasicomboQTEInputEdge::Release),EQuasicomboQTEProgress::Succeeded);
+    S=Cannon(); S.Submit(EQuasicomboQTEInput::Fire,100.5,false);
+    TestEqual(TEXT("Release window expires at 2.2 seconds"),S.Submit(EQuasicomboQTEInput::Fire,102.701,false,EQuasicomboQTEInputEdge::Release),EQuasicomboQTEProgress::Failed);
+    S=Cannon(); S.Submit(EQuasicomboQTEInput::Fire,100.5,false);
+    TestEqual(TEXT("Cancellation fails"),S.Submit(EQuasicomboQTEInput::Fire,100.6,false,EQuasicomboQTEInputEdge::Cancel),EQuasicomboQTEProgress::Failed);
+    S=Cannon(); S.Submit(EQuasicomboQTEInput::Fire,100.5,false); S.Advance(100.8,false); S.Advance(120.8,true);
+    TestTrue(TEXT("Pause freezes charge progress"),FMath::IsNearlyEqual(S.GetChargeSeconds(120.8,true),.3,1e-9));
+    TestEqual(TEXT("Release works after resumed charge"),S.Submit(EQuasicomboQTEInput::Fire,121.6,false,EQuasicomboQTEInputEdge::Release),EQuasicomboQTEProgress::Succeeded);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FQuasicomboQTEInterruptionTest,"Quasicombo.QTE.Interruption",EAutomationTestFlags::EditorContext|EAutomationTestFlags::ProductFilter)
+bool FQuasicomboQTEInterruptionTest::RunTest(const FString&)
+{
+    auto* C=NewObject<UQuasicomboQTEComponent>();
+    C->Sequence.Begin(false,100,1.5); C->bOwningInput=true;
+    TestTrue(TEXT("Owns input before interruption"),C->IsQTEActive());
+    C->HandleRunEnded(EQuasicomboRunOutcome::Defeat);
+    TestFalse(TEXT("Interruption cancels input immediately"),C->IsQTEActive());
+    TestTrue(TEXT("Cannot deliver late result"),C->bResultDelivered);
+    TestFalse(TEXT("Later press cannot win"),C->SubmitPrompt(EQuasicomboQTEInput::Attack));
+    return true;
+}
 #endif

@@ -4,6 +4,9 @@
 #include "Components/BoxComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "QuasicomboBoss.h"
+#include "SideScrollingCharacter.h"
+#include "Kismet/GameplayStatics.h"
 
 AQuasicomboArenaEntry::AQuasicomboArenaEntry()
 {
@@ -29,5 +32,7 @@ void AQuasicomboArenaEntry::HandleOverlap(UPrimitiveComponent*, AActor* Other, U
 	{
 		Character->GetCharacterMovement()->StopMovementImmediately();
 		Character->SetActorLocation(ArrivalLocation, false, nullptr, ETeleportType::TeleportPhysics);
+		if (AQuasicomboBoss* Boss = Cast<AQuasicomboBoss>(UGameplayStatics::GetActorOfClass(this, AQuasicomboBoss::StaticClass())))
+			Boss->StartEncounter(Cast<ASideScrollingCharacter>(Character));
 	}
 }

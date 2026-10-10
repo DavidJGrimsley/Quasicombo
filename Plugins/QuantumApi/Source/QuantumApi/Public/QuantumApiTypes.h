@@ -50,6 +50,10 @@ struct FQuantumApiRequestOptions
     /** Headers for the developer's proxy or custom auth scheme. They are never logged by this plugin. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Quantum API")
     TMap<FString, FString> ExtraHeaders;
+
+    /** Zero inherits the client default. Positive values override this request only. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Quantum API", meta = (ClampMin = "0.0"))
+    float TimeoutSecondsOverride = 0.0f;
 };
 
 USTRUCT(BlueprintType)

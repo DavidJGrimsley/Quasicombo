@@ -7,6 +7,8 @@
 #include "SideScrollingGameMode.generated.h"
 
 class USideScrollingUI;
+class UAudioComponent;
+class UQuasicomboMusicComponent;
 
 /**
  *  Simple Side Scrolling Game Mode
@@ -32,6 +34,26 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category="Pickups")
 	int32 PickupsCollected = 0;
 
+	/** Looping background music for the active game session. */
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> BackgroundMusicComponent;
+
+	/** Base volume for the piano music. Adjust on BP_SideScrollingGameMode. */
+	UPROPERTY(EditDefaultsOnly, Category="Audio", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float BackgroundMusicVolume = 1.0f;
+
+	FTimerHandle BackgroundMusicStartTimerHandle;
+
+	/** Independent forest ambience layer, looping on the audio device. */
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> ForestAmbienceComponent;
+
+	/** Base volume for the forest ambience. Adjust on BP_SideScrollingGameMode. */
+	UPROPERTY(EditDefaultsOnly, Category="Audio", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float ForestAmbienceVolume = 0.35f;
+
+	void StartBackgroundMusic();
+
 protected:
 
 	/** Initialization */
@@ -50,7 +72,18 @@ protected:
 	int32 CurrentPlayerStartAssignment = 0;
 
 public:
+	ASideScrollingGameMode();
+	/** The menu itself is an ordinary Blueprint actor and ordinary Widget Blueprints. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Quasicombo|Menu") TSubclassOf<AActor> FrontendDirectorClass;
+	UFUNCTION(BlueprintPure, Category="Quasicombo|Menu") bool ShouldShowFrontend() const;
+	UFUNCTION(BlueprintCallable, Category="Quasicombo|Menu") void StartGameplay();
+	virtual void EndPlay(EEndPlayReason::Type Reason) override;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Audio")
+	TObjectPtr<UQuasicomboMusicComponent> MusicController;
 
 	/** Receives an interaction event from another actor */
 	virtual void ProcessPickup();
+
+private:
+	UFUNCTION() void HandleAudioSettingsChanged();
 };

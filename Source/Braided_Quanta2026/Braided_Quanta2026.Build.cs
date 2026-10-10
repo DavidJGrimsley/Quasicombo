@@ -12,7 +12,9 @@ public class Braided_Quanta2026 : ModuleRules
 			"Core",
 			"CoreUObject",
 			"Engine",
+			"AnimGraphRuntime",
 			"InputCore",
+            "ApplicationCore",
 			"EnhancedInput",
 			"AIModule",
 			"StateTreeModule",
@@ -20,10 +22,13 @@ public class Braided_Quanta2026 : ModuleRules
 			"UMG",
 			"Slate",
 			"SlateCore",
+			"Niagara",
 			"QuantumApi"
+			,"LevelSequence"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });
+        if (Target.bBuildEditor) PrivateDependencyModuleNames.AddRange(new string[] { "UnrealEd", "AnimGraph", "BlueprintGraph", "KismetCompiler", "AssetTools", "ToolMenus", "PythonScriptPlugin", "Json" });
 
 		PublicIncludePaths.AddRange(new string[] {
 			"Braided_Quanta2026",
@@ -41,10 +46,12 @@ public class Braided_Quanta2026 : ModuleRules
 			"Braided_Quanta2026/Variant_SideScrolling/Interfaces",
 			"Braided_Quanta2026/Variant_SideScrolling/UI",
 			"Braided_Quanta2026/Quasicombo/Route",
+			"Braided_Quanta2026/Quasicombo/Enemies",
 			"Braided_Quanta2026/Quasicombo/Quantum",
 			"Braided_Quanta2026/Quasicombo/Boss",
 			"Braided_Quanta2026/Quasicombo/QTE",
-			"Braided_Quanta2026/Quasicombo/UI"
+			"Braided_Quanta2026/Quasicombo/UI",
+            "Braided_Quanta2026/Quasicombo/Weapons"
 		});
 
 		// Uncomment if you are using Slate UI
